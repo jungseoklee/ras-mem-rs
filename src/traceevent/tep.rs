@@ -71,7 +71,7 @@ where
         }
     }
 
-    // C: tep_parse_header_page(tep, buf, size, long_size) -> order tep, buf, size, long_size
+    // C: tep_parse_header_page(tep, buf, size, long_size)
     pub fn parse_header_page(
         &mut self,
         buf: &str,
@@ -95,7 +95,7 @@ where
         Ok(())
     }
 
-    // C: tep_parse_event(tep, buf, size, sys) -> order tep, buf, size, sys
+    // C: tep_parse_event(tep, buf, size, sys)
     pub fn parse_event(&mut self, buf: &str, size: usize, sys: &str) -> Result<u32, String> {
         let mut name = String::new();
         let mut id: u32 = 0;
@@ -153,6 +153,11 @@ where
         self.events_by_id.get(id)
     }
 
+    // C: tep_find_event_by_record(tep, record)
+    pub fn find_event_by_record(&self, record: &TepRecord) -> Option<&TepEvent> {
+        self.events_by_id.get(&(record.common_type as u32))
+    }
+
     // C: tep_register_event_handler(tep, id, sys_name, event_name, func, context)
     pub fn register_event_handler<F>(
         &mut self,
@@ -189,7 +194,7 @@ where
             .remove(&(sys_name.to_string(), event_name.to_string()));
     }
 
-    // C: tep_print_event(tep, s, record, fmt, ...) -> order tep, s, record
+    // C: tep_print_event(tep, s, record, fmt, ...)
     pub fn print_event(&self, s: &mut TraceSeq, record: &TepRecord) -> i32 {
         let event = match self.events_by_id.get(&(record.common_type as u32)) {
             Some(e) => e,
@@ -199,12 +204,15 @@ where
         if let Some(entry) = self.handlers.get(&key) {
             (entry.handler)(s, record, event, &entry.context)
         } else {
-            s.push_str(&format!("{}:{} raw={:?}", event.group, event.name, record.data));
+            s.push_str(&format!(
+                "{}:{} raw={:?}",
+                event.group, event.name, record.data
+            ));
             0
         }
     }
 
-    // C: tep_get_field_val(s, event, name, record, val, err) -> order s, event, name, record
+    // C: tep_get_field_val(s, event, name, record, val, err)
     pub fn get_field_val(
         &self,
         s: &mut TraceSeq,
@@ -224,31 +232,21 @@ where
         ))
     }
 
-    pub fn get_field_val_by_record(
-        &self,
-        s: &mut TraceSeq,
-        record: &TepRecord,
-        name: &str,
-    ) -> Option<i64> {
-        let event = self.events_by_id.get(&(record.common_type as u32))?;
-        self.get_field_val(s, event, name, record)
-    }
-
-    pub fn get_field_str<'a>(
+    // C: tep_get_field_raw(s, event, name, record, len, err)
+    pub fn get_field_raw<'a>(
         &self,
         s: &mut TraceSeq,
         event: &TepEvent,
         name: &str,
         record: &'a TepRecord,
-    ) -> Option<&'a [u8]> {
+    ) -> Option<(&'a [u8], usize)> {
         let _ = s;
         let f = event.fields.iter().find(|x| x.name == name)?;
         if f.offset + f.size > record.data.len() {
             return None;
         }
         let raw = &record.data[f.offset..f.offset + f.size];
-        let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-        Some(&raw[..end])
+        Some((raw, raw.len()))
     }
 
     fn parse_field_line(line: &str) -> Option<Field> {
