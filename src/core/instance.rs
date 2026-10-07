@@ -29,6 +29,13 @@ impl Instance {
     pub fn thread_name(&self) -> &'static str {
         self.name()
     }
+
+    pub fn worker_threads(&self) -> usize {
+        match self {
+            Self::Dram => 4, // avoid pipe overrun on CE storms
+            Self::Hbm => 2, // keep draining if one worker dies
+        }
+    }
 }
 
 #[cfg(test)]
@@ -43,6 +50,7 @@ mod tests {
         assert_eq!(inst.buffer_size_kb(), 1024);
         assert_eq!(inst.buffer_percent(), 50);
         assert_eq!(inst.thread_name(), "ras_mem_d");
+        assert_eq!(inst.worker_threads(), 4);
     }
 
     #[test]
@@ -53,5 +61,6 @@ mod tests {
         assert_eq!(inst.buffer_size_kb(), 8192);
         assert_eq!(inst.buffer_percent(), 0);
         assert_eq!(inst.thread_name(), "ras_mem_h");
+        assert_eq!(inst.worker_threads(), 2);
     }
 }

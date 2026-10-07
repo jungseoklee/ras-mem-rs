@@ -4,16 +4,26 @@ use std::{
     path::PathBuf,
 };
 
+use crate::core::instance::Instance;
+
 #[derive(Debug)]
 pub struct TraceFs {
-    root: PathBuf,
+    root: PathBuf, // ../instances/{name}
 }
 
 impl TraceFs {
-    pub fn new(name: &str) -> anyhow::Result<Self> {
+    pub fn from_root(name: &str) -> anyhow::Result<Self> {
         let path = super::mount::find_tracing_dir()
             .ok_or_else(|| anyhow::anyhow!("tracing fs not mounted"))?;
         Self::from_path(path, name)
+    }
+
+    pub fn from_instance(instance: Instance) -> anyhow::Result<Self> {
+        let fs = Self::from_root(instance.name())?;
+        fs.clear()?;
+        fs.set_buffer_size_kb(instance.buffer_size_kb())?;
+        fs.set_buffer_percent(instance.buffer_percent())?;
+        Ok(fs)
     }
 
     fn from_path(tracing_root: PathBuf, name: &str) -> anyhow::Result<Self> {
