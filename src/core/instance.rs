@@ -33,7 +33,7 @@ impl Instance {
     pub fn worker_threads(&self) -> usize {
         match self {
             Self::Dram => 4, // avoid pipe overrun on CE storms
-            Self::Hbm => 2, // keep draining if one worker dies
+            Self::Hbm => 2,  // keep draining if one worker dies
         }
     }
 }

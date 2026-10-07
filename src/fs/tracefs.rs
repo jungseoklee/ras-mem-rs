@@ -82,22 +82,30 @@ impl TraceFs {
         anyhow::Ok(())
     }
 
-    pub fn per_cpu_trace_pipe_raw(&self) -> Vec<PathBuf> {
+    pub fn per_cpu_trace_pipe_raw(&self) -> anyhow::Result<Vec<(i32, PathBuf)>> {
         let per_cpu = self.root.join("per_cpu");
-        if !per_cpu.exists() {
-            return Vec::new();
-        }
-        let mut res = Vec::new();
-        if let Ok(entries) = fs::read_dir(&per_cpu) {
-            for e in entries.flatten() {
-                let p = e.path().join("trace_pipe_raw");
-                if p.exists() {
-                    res.push(p);
-                }
+        anyhow::ensure!(per_cpu.exists(), "per_cpu not found at {per_cpu:?}");
+
+        // TODO: handle offline cpus, e.g. we might need to check a list of online and offline periodically
+        let mut online = Vec::new();
+        for e in fs::read_dir(&per_cpu)? {
+            let e = e?;
+            let name = e.file_name().to_string_lossy().to_string();
+            let Ok(cpu_id) = name.trim_start_matches("cpu").parse::<i32>() else {
+                continue;
+            };
+            let p = e.path().join("trace_pipe_raw");
+            if p.exists() {
+                online.push((cpu_id, p));
             }
         }
-        res.sort();
-        res
+
+        anyhow::ensure!(
+            !online.is_empty(),
+            "no trace_pipe_raw found under {per_cpu:?}"
+        );
+        online.sort_by_key(|(id, _)| *id);
+        Ok(online)
     }
 
     fn append(&self, payload: &str) -> anyhow::Result<()> {
@@ -208,6 +216,29 @@ mod tests {
     }
 
     #[test]
+    fn test_enable_with_two_different_names() {
+        let tmp = TempDir::new().unwrap();
+        let tracing_root = tmp.path().to_path_buf();
+
+        for name in ["hbm", "dram"] {
+            let instance = tracing_root.join(format!("instances/{name}"));
+            fs::create_dir_all(&instance).unwrap();
+            fs::File::create(instance.join("set_event")).unwrap();
+            fs::File::create(instance.join("buffer_size_kb")).unwrap();
+            fs::File::create(instance.join("buffer_percent")).unwrap();
+        }
+
+        let h = TraceFs::from_path(tracing_root.clone(), "hbm").unwrap();
+        let d = TraceFs::from_path(tracing_root, "dram").unwrap();
+
+        h.enable(["amdgpu:amdgpu_ras_event"]).unwrap();
+        d.enable(["ras:mc_event"]).unwrap();
+
+        assert_eq!(read(&h), "amdgpu:amdgpu_ras_event\n");
+        assert_eq!(read(&d), "ras:mc_event\n");
+    }
+
+    #[test]
     fn test_clear() {
         let (_tmp, fs) = fs();
 
@@ -250,33 +281,45 @@ mod tests {
     fn test_per_cpu_trace_pipe_raw() {
         let (_tmp, fs) = fs();
 
-        let pipes = fs.per_cpu_trace_pipe_raw();
+        let pipes = fs.per_cpu_trace_pipe_raw().unwrap();
 
         assert_eq!(pipes.len(), 2);
-        assert!(pipes[0].to_string_lossy().contains("cpu0"));
-        assert!(pipes[1].to_string_lossy().contains("cpu1"));
+        assert_eq!(pipes[0].0, 0);
+        assert_eq!(pipes[1].0, 1);
+        assert!(pipes[0].1.to_string_lossy().contains("cpu0"));
+        assert!(pipes[1].1.to_string_lossy().contains("cpu1"));
     }
 
     #[test]
-    fn test_isolation() {
+    fn test_per_cpu_trace_pipe_raw_without_per_cpu() {
         let tmp = TempDir::new().unwrap();
-        let tracing_root = tmp.path().to_path_buf();
+        let tracing_root = tmp.path().to_path_buf(); // owned, borrow ends
+        let instance = tracing_root.join("instances/ras_mem");
+        fs::create_dir_all(&instance).unwrap();
+        fs::File::create(instance.join("set_event")).unwrap();
+        let fs = TraceFs::from_path(tracing_root, "ras_mem").unwrap();
 
-        for name in ["hbm", "dram"] {
-            let instance = tracing_root.join(format!("instances/{name}"));
-            fs::create_dir_all(&instance).unwrap();
-            fs::File::create(instance.join("set_event")).unwrap();
-            fs::File::create(instance.join("buffer_size_kb")).unwrap();
-            fs::File::create(instance.join("buffer_percent")).unwrap();
-        }
+        let res = fs.per_cpu_trace_pipe_raw();
 
-        let h = TraceFs::from_path(tracing_root.clone(), "hbm").unwrap();
-        let d = TraceFs::from_path(tracing_root, "dram").unwrap();
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("per_cpu not found"));
+    }
 
-        h.enable(["amdgpu:amdgpu_ras_event"]).unwrap();
-        d.enable(["ras:mc_event"]).unwrap();
+    #[test]
+    fn test_per_cpu_trace_pipe_raw_without_trace_pipe_raw() {
+        let tmp = TempDir::new().unwrap();
+        let tracing_root = tmp.path().to_path_buf(); // owned, borrow ends
+        let instance = tracing_root.join("instances/ras_mem");
+        fs::create_dir_all(&instance).unwrap();
+        fs::create_dir_all(instance.join("per_cpu/cpu0")).unwrap();
+        fs::create_dir_all(instance.join("per_cpu/cpu1")).unwrap();
+        fs::create_dir_all(instance.join("per_cpu/malformed")).unwrap();
+        fs::File::create(instance.join("set_event")).unwrap();
+        // fs::File::create(instance.join("per_cpu/cpu1/trace_pipe_raw")).unwrap();
+        let fs = TraceFs::from_path(tracing_root, "ras_mem").unwrap();
 
-        assert_eq!(read(&h), "amdgpu:amdgpu_ras_event\n");
-        assert_eq!(read(&d), "ras:mc_event\n");
+        let res = fs.per_cpu_trace_pipe_raw();
+
+        assert!(res.is_err());
     }
 }
