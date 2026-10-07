@@ -27,7 +27,7 @@ impl TraceFs {
         if !root.join("set_event").exists() {
             anyhow::bail!("set_event not found");
         }
-        Ok(Self { root })
+        anyhow::Ok(Self { root })
     }
 
     pub fn enable<I, S>(&self, events: I) -> anyhow::Result<()>
@@ -56,7 +56,7 @@ impl TraceFs {
 
     pub fn clear(&self) -> anyhow::Result<()> {
         fs::write(self.set_event_path(), "")?;
-        Ok(())
+        anyhow::Ok(())
     }
 
     pub fn set_buffer_size_kb(&self, kb: u64) -> anyhow::Result<()> {
@@ -99,7 +99,7 @@ impl TraceFs {
             .append(true)
             .open(self.set_event_path())?;
         f.write_all(payload.as_bytes())?;
-        Ok(())
+        anyhow::Ok(())
     }
 
     fn set_event_path(&self) -> PathBuf {
@@ -130,7 +130,7 @@ mod tests {
     }
 
     fn fs() -> (TempDir, TraceFs) {
-        fs_with_name("ras-rs")
+        fs_with_name("ras_mem")
     }
 
     fn read(fs: &TraceFs) -> String {
@@ -141,7 +141,7 @@ mod tests {
     fn test_from_path_without_instances() {
         let tmp = TempDir::new().unwrap();
 
-        let res = TraceFs::from_path(tmp.path().to_path_buf(), "ras-rs");
+        let res = TraceFs::from_path(tmp.path().to_path_buf(), "ras_mem");
 
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("3.15"));
@@ -151,10 +151,10 @@ mod tests {
     fn test_from_path_without_set_event() {
         let tmp = TempDir::new().unwrap();
         let tracing_root = tmp.path().to_path_buf(); // owned, borrow ends
-        let instance = tracing_root.join("instances/ras-rs");
+        let instance = tracing_root.join("instances/ras_mem");
         fs::create_dir_all(&instance).unwrap();
 
-        let res = TraceFs::from_path(tracing_root, "ras-rs");
+        let res = TraceFs::from_path(tracing_root, "ras_mem");
 
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("set_event not found"));
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_buffer_size_kb_and_buffer_percent() {
-        let (_tmp, fs) = fs_with_name("ras-rs-hbm");
+        let (_tmp, fs) = fs_with_name("ras_mem_h");
         fs.set_buffer_size_kb(8192).unwrap();
         fs.set_buffer_percent(0).unwrap();
         assert_eq!(
@@ -221,7 +221,7 @@ mod tests {
             "0"
         );
 
-        let (_tmp2, fs) = fs_with_name("ras-rs-dram");
+        let (_tmp2, fs) = fs_with_name("ras_mem_d");
         fs.set_buffer_size_kb(1024).unwrap();
         fs.set_buffer_percent(50).unwrap();
         assert_eq!(

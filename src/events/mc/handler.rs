@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::core::instance::Instance;
 use crate::core::{context::Context, handler::EventHandler};
 use crate::events::Event;
 use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
@@ -15,8 +16,13 @@ impl<C: Context> EventHandler<C> for McEventHandler {
     fn group(&self) -> &'static str {
         "ras"
     }
+
     fn name(&self) -> &'static str {
         "mc_event"
+    }
+
+    fn instance(&self) -> Instance {
+        Instance::Dram
     }
 
     fn parse(

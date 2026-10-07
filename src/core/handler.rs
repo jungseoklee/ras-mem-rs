@@ -1,5 +1,5 @@
 use crate::{
-    core::context::Context,
+    core::{context::Context, instance::Instance},
     events::Event,
     traceevent::{
         tep::{TepEvent, TepHandle, TepRecord},
@@ -10,6 +10,7 @@ use crate::{
 pub trait EventHandler<C: Context>: Send + Sync {
     fn group(&self) -> &'static str;
     fn name(&self) -> &'static str;
+    fn instance(&self) -> Instance;
     fn parse(
         &self,
         tep: &TepHandle<C>,
