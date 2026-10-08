@@ -1,4 +1,4 @@
-use crate::{config::Config, states::State};
+use crate::{config::Config, state::State};
 
 pub trait Context: Send + Sync + 'static {
     fn config(&self) -> &Config;

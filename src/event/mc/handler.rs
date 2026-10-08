@@ -2,7 +2,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::core::instance::Instance;
 use crate::core::{context::Context, handler::EventHandler};
-use crate::events::Event;
+use crate::event::Event;
 use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
 use crate::traceevent::tep_ext::TepHandleExt;
 use crate::traceevent::trace_seq::TraceSeq;
@@ -170,8 +170,8 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::core::context::Context;
-    use crate::events::mc::{McConfig, McState};
-    use crate::states::State;
+    use crate::event::mc::{McConfig, McState};
+    use crate::state::State;
     use crate::traceevent::tep::{Field, TepEvent, TepHandle, TepRecord};
     use crate::traceevent::trace_seq::TraceSeq;
     use std::sync::Mutex;
@@ -368,7 +368,7 @@ mod tests {
             .unwrap();
 
         match ev {
-            crate::events::Event::Mc(mc) => {
+            crate::event::Event::Mc(mc) => {
                 assert_eq!(mc.error_type, HwEventErrType::Corrected);
                 assert_eq!(mc.error_count, 2);
                 assert_eq!(mc.label, "DIMM0");
@@ -385,7 +385,7 @@ mod tests {
         let fx = Fixture::new(Some(5));
         let h = McEventHandler;
 
-        let ev = crate::events::Event::Mc(McEvent {
+        let ev = crate::event::Event::Mc(McEvent {
             timestamp: UNIX_EPOCH + Duration::from_secs(1000),
             error_count: 3,
             error_type: HwEventErrType::Corrected,
@@ -407,7 +407,7 @@ mod tests {
         h.update_state(ev, &fx.ctx);
         assert_eq!(fx.ctx.state.mc_state.lock().unwrap().per_sec, 6);
 
-        let fatal = crate::events::Event::Mc(McEvent {
+        let fatal = crate::event::Event::Mc(McEvent {
             timestamp: UNIX_EPOCH + Duration::from_secs(1000),
             error_count: 10,
             error_type: HwEventErrType::Fatal,

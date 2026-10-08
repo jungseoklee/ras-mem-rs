@@ -1,6 +1,6 @@
 use crate::core::instance::Instance;
 use crate::core::{context::Context, handler::EventHandler};
-use crate::events::mc::McEventHandler;
+use crate::event::mc::McEventHandler;
 
 pub fn all_handlers<C: Context>() -> Vec<Box<dyn EventHandler<C>>> {
     let v: Vec<Box<dyn EventHandler<C>>> = vec![Box::new(McEventHandler)];
@@ -17,7 +17,7 @@ pub fn handlers_for<C: Context>(instance: Instance) -> Vec<Box<dyn EventHandler<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::Config, core::instance::Instance, states::State};
+    use crate::{config::Config, core::instance::Instance, state::State};
 
     struct TestContext {
         config: Config,

@@ -1,4 +1,4 @@
-use crate::events::mc::McConfig;
+use crate::event::mc::McConfig;
 
 #[derive(Debug, Default)]
 pub struct Config {

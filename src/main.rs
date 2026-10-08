@@ -1,8 +1,8 @@
 mod config;
 mod core;
-mod events;
+mod event;
 mod fs;
-mod states;
+mod state;
 mod traceevent;
 
 fn main() {

@@ -1,6 +1,6 @@
 use crate::{
     core::{context::Context, instance::Instance},
-    events::Event,
+    event::Event,
     traceevent::{
         tep::{TepEvent, TepHandle, TepRecord},
         trace_seq::TraceSeq,

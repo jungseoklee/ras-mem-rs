@@ -1,4 +1,4 @@
-use crate::events::mc::McState;
+use crate::event::mc::McState;
 use std::sync::Mutex;
 
 #[derive(Default)]
