@@ -31,7 +31,7 @@ pub struct TepRecord {
     pub data: Vec<u8>,
     pub ts: u64,
     pub common_type: u16,
-    pub cpu: i32,
+    pub cpu: u32,
 }
 
 pub type HandlerFn<C> = Box<dyn Fn(&mut TraceSeq, &TepRecord, &TepEvent, &C) -> i32 + Send + Sync>;
@@ -71,6 +71,15 @@ where
         }
     }
 
+    // TODO Potential Bug #1 - parse_header_page is fragile on "commit" detection
+    // Current: if line.contains("commit") { parse_field_line(line) }
+    // Problem: Only works if the line literally contains "commit" string and
+    // assumes long_size = field.size without checking field name.
+    // On some kernels header_page format changes order.
+    // Fix: Explicitly check f.name == "commit" after parse_field_line():
+    // if let Some(f) = Self::parse_field_line(line) {
+    // if f.name == "commit" { self.long_size = f.size; }
+    // }
     // C: tep_parse_header_page(tep, buf, size, long_size)
     pub fn parse_header_page(
         &mut self,
@@ -95,6 +104,14 @@ where
         Ok(())
     }
 
+    // TODO Potential Bug #2 - parse_event truncates multi-line print fmt
+    // Current: print_fmt = l["print fmt:".len()..].trim().to_string(); in_format = false;
+    // Problem: Real tracefs format has print fmt spanning multiple lines, e.g.
+    // print fmt: "%s %d", REC->msg, REC->error_count
+    // Your code only captures first line and drops the rest.
+    // Not used for mc_event now (you use custom format_event), but will
+    // break generic trace-cmd report / tep_print_event compat.
+    // Fix: Accumulate lines until EOF or next event section, not just first line.
     // C: tep_parse_event(tep, buf, size, sys)
     pub fn parse_event(&mut self, buf: &str, size: usize, sys: &str) -> Result<u32, String> {
         let mut name = String::new();
@@ -232,6 +249,17 @@ where
         ))
     }
 
+    // TODO Potential Bug #3 - get_field_raw returns NUL-padded bytes, not trimmed string
+    // Current: Some((raw, raw.len())) where raw = &record.data[offset..offset+size]
+    // Problem: char[32] fields like msg, label, driver_detail are NUL-terminated
+    // C strings. If tep_ext::parse_raw does String::from_utf8_lossy(raw)
+    // without trimming \0, you get "DIMM0\0\0\0..." leaking into Event.
+    // Your handler.rs tests write_str adds explicit \0, but real kernel
+    // data will have padding.
+    // Fix: In tep_ext.rs parse_raw(), trim at first NUL:
+    // let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+    // String::from_utf8_lossy(&raw[..end]).to_string()
+    // Same for driver_detail.
     // C: tep_get_field_raw(s, event, name, record, len, err)
     pub fn get_field_raw<'a>(
         &self,

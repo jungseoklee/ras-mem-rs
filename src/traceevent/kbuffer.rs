@@ -256,6 +256,10 @@ impl KBuffer {
     pub fn data_start_offset(&self) -> usize {
         self.data_start
     }
+
+    pub fn endian(&self) -> Endian {
+        if self.big_endian { Endian::Big } else { Endian::Little }
+    }
 }
 
 #[cfg(test)]
@@ -344,6 +348,7 @@ mod tests {
         assert_eq!(k.curr_offset(), ds);
         assert_eq!(k.curr_index(), 0);
         assert!(k.next_event().is_none());
+        assert_eq!(k.endian(), Endian::Little);
     }
 
     #[test]
@@ -373,6 +378,7 @@ mod tests {
         let (_, ts) = k.read_event().unwrap();
 
         assert_eq!(ts, 2005);
+        assert_eq!(k.endian(), Endian::Big);
     }
 
     #[test]
