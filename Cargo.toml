@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync"] }
+libc = "0.2.190"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio-util = "0.7.19"
 
 [dev-dependencies]
 tempfile = "3.27.0"

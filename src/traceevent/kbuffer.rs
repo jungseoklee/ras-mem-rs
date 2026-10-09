@@ -258,7 +258,11 @@ impl KBuffer {
     }
 
     pub fn endian(&self) -> Endian {
-        if self.big_endian { Endian::Big } else { Endian::Little }
+        if self.big_endian {
+            Endian::Big
+        } else {
+            Endian::Little
+        }
     }
 }
 

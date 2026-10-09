@@ -26,7 +26,7 @@ impl TraceFs {
         Ok(fs)
     }
 
-    fn from_path(tracing_root: PathBuf, name: &str) -> anyhow::Result<Self> {
+    pub(crate) fn from_path(tracing_root: PathBuf, name: &str) -> anyhow::Result<Self> {
         if !tracing_root.join("instances").exists() {
             anyhow::bail!("3.15+ kernel required");
         }
@@ -80,6 +80,10 @@ impl TraceFs {
         }
         fs::write(self.root.join("buffer_percent"), pct.to_string())?;
         anyhow::Ok(())
+    }
+
+    pub fn buffer_subbuf_size(&self) -> anyhow::Result<usize> {
+        Ok(self.buffer_subbuf_size_kb()? * 1024)
     }
 
     pub fn buffer_subbuf_size_kb(&self) -> anyhow::Result<usize> {

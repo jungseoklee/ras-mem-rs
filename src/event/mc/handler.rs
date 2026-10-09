@@ -350,8 +350,8 @@ mod tests {
         let mut fx = Fixture::new(Some(10));
         fx.write_i64(0, 0); // Corrected
         fx.write_i64(8, 2);
-        fx.write_str(16, "UE");
-        fx.write_str(48, "DIMM0");
+        fx.write_str(16, "ue");
+        fx.write_str(48, "dimm0");
         fx.write_i64(80, 1);
         fx.write_i64(88, 0);
         fx.write_i64(96, 1);
@@ -371,7 +371,7 @@ mod tests {
             crate::event::Event::Mc(mc) => {
                 assert_eq!(mc.error_type, HwEventErrType::Corrected);
                 assert_eq!(mc.error_count, 2);
-                assert_eq!(mc.label, "DIMM0");
+                assert_eq!(mc.label, "dimm0");
                 assert_eq!(mc.address, 0xabcd);
             }
             _ => panic!("wrong event"),
