@@ -82,7 +82,12 @@ impl TraceFs {
         anyhow::Ok(())
     }
 
-    pub fn per_cpu_trace_pipe_raw(&self) -> anyhow::Result<Vec<(i32, PathBuf)>> {
+    pub fn buffer_subbuf_size_kb(&self) -> anyhow::Result<usize> {
+        let size_kb = fs::read_to_string(self.root.join("buffer_subbuf_size_kb"))?;
+        Ok(size_kb.trim().parse()?)
+    }
+
+    pub fn per_cpu_trace_pipe_raw(&self) -> anyhow::Result<Vec<(u32, PathBuf)>> {
         let per_cpu = self.root.join("per_cpu");
         anyhow::ensure!(per_cpu.exists(), "per_cpu not found at {per_cpu:?}");
 
@@ -91,7 +96,7 @@ impl TraceFs {
         for e in fs::read_dir(&per_cpu)? {
             let e = e?;
             let name = e.file_name().to_string_lossy().to_string();
-            let Ok(cpu_id) = name.trim_start_matches("cpu").parse::<i32>() else {
+            let Ok(cpu_id) = name.trim_start_matches("cpu").parse::<u32>() else {
                 continue;
             };
             let p = e.path().join("trace_pipe_raw");
@@ -140,8 +145,10 @@ mod tests {
         fs::File::create(instance.join("set_event")).unwrap();
         fs::File::create(instance.join("buffer_size_kb")).unwrap();
         fs::File::create(instance.join("buffer_percent")).unwrap();
+        fs::File::create(instance.join("buffer_subbuf_size_kb")).unwrap();
         fs::File::create(instance.join("per_cpu/cpu0/trace_pipe_raw")).unwrap();
         fs::File::create(instance.join("per_cpu/cpu1/trace_pipe_raw")).unwrap();
+        fs::write(instance.join("buffer_subbuf_size_kb"), "42").unwrap();
 
         let fs = TraceFs::from_path(tracing_root, name).unwrap();
         (tmp, fs)
@@ -275,6 +282,13 @@ mod tests {
     fn test_buffer_percent_with_invalid_percent() {
         let (_tmp, fs) = fs();
         assert!(fs.set_buffer_percent(101).is_err());
+    }
+
+    #[test]
+    fn test_buffer_subbuf_size_kb() {
+        let (_tmp, fs) = fs();
+        let size_kb = fs.buffer_subbuf_size_kb().unwrap();
+        assert_eq!(size_kb, 42);
     }
 
     #[test]
