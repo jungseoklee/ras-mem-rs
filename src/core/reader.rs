@@ -309,7 +309,7 @@ mod tests {
                 driver_detail: "".into(),
             }))
         }
-        fn update_state(&self, _event: Event, _ctx: &C) {}
+        fn update_state(&self, _event: &Event, _ctx: &C) {}
     }
 
     struct Fixture {
