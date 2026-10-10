@@ -145,14 +145,14 @@ impl KBuffer {
         Some(type_len)
     }
 
-    pub fn load_subbuffer(&mut self, page: &[u8]) -> Result<(), &'static str> {
+    pub fn load_subbuffer(&mut self, page: Vec<u8>) -> Result<Vec<u8>, &'static str> {
         let min = if self.long_8 { 16 } else { 12 };
         if page.len() < min {
             return Err("page too small");
         }
-        self.subbuffer = page.to_vec(); // TODO: can we achieve zero-copy here?
-        self.timestamp = self.read_u64_at(0).ok_or("page too small")?;
-        let flags = self.read_long_at(8).ok_or("page too small")?;
+        let old = std::mem::replace(&mut self.subbuffer, page);
+        self.timestamp = self.read_u64_at(0).unwrap(); // safe due to L150
+        let flags = self.read_long_at(8).unwrap(); // safe due to L150
         self.size = (flags & COMMIT_MASK) as usize;
         if self.size > self.subbuffer.len().saturating_sub(self.data_start) {
             self.size = self.subbuffer.len().saturating_sub(self.data_start);
@@ -177,7 +177,7 @@ impl KBuffer {
             self.index = self.size;
         }
         self.first = self.curr;
-        Ok(())
+        Ok(old)
     }
 
     fn advance(&mut self) -> Option<u32> {
@@ -332,61 +332,65 @@ mod tests {
     }
 
     #[test]
-    fn test_l4_little() {
+    fn test_load_subbuffer_with_l4_little() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
         let mut page = make_page(false, Endian::Little, 1000, 8, 0);
         w32le(&mut page, ds, enc(0, 1, false));
         w32le(&mut page, ds + 4, 0xdeadbeef);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         assert_eq!(k.subbuffer_size(), 8);
 
         let (ev, ts) = k.read_event().unwrap();
 
         assert_eq!(ts, 1000);
-        assert_eq!(ev.len(), 4);
+        assert_eq!(k.timestamp(), 1000);
         assert_eq!(k.event_size(), 4);
         assert_eq!(k.curr_size(), 8);
         assert_eq!(k.curr_offset(), ds);
         assert_eq!(k.curr_index(), 0);
-        assert!(k.next_event().is_none());
         assert_eq!(k.endian(), Endian::Little);
+        assert_eq!(k.needs_swap, cfg!(target_endian = "big"));
+        assert_eq!(ev.len(), 4);
+        assert!(k.next_event().is_none());
     }
 
     #[test]
-    fn test_l8_little() {
+    fn test_load_subbuffer_with_l8_little() {
         let mut k = KBuffer::new(LongSize::L8, Endian::Little);
         let ds = 16;
         let mut page = make_page(true, Endian::Little, 5555, 8, 0);
         w32le(&mut page, ds, enc(10, 1, false));
         w32le(&mut page, ds + 4, 0x11223344);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (ev, ts) = k.read_event().unwrap();
 
-        assert_eq!(ts, 5555 + 10);
+        assert_eq!(ts, 5565);
         assert_eq!(ev.len(), 4);
     }
 
     #[test]
-    fn test_l4_big() {
+    fn test_load_subbuffer_with_l4_big() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Big);
         let ds = 12;
         let mut page = make_page(false, Endian::Big, 2000, 8, 0);
         w32be(&mut page, ds, enc(5, 1, true));
         w32be(&mut page, ds + 4, 0xaabbccdd);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (_, ts) = k.read_event().unwrap();
 
         assert_eq!(ts, 2005);
+        assert_eq!(k.timestamp(), 2005);
         assert_eq!(k.endian(), Endian::Big);
+        assert_eq!(k.needs_swap, !cfg!(target_endian = "big"));
     }
 
     #[test]
-    fn test_large_type() {
+    fn test_load_subbuffer_with_large_type() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
         let commit = 20;
@@ -395,7 +399,7 @@ mod tests {
         w32le(&mut page, ds + 4, 14);
         page[ds + 8..ds + 18].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (ev, _) = k.read_event().unwrap();
 
         assert_eq!(ev.len(), 12);
@@ -404,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn test_time_extend() {
+    fn test_load_subbuffer_with_time_extend() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
         let mut page = make_page(false, Endian::Little, 1000, 16, 0);
@@ -412,13 +416,13 @@ mod tests {
         w32le(&mut page, ds + 4, 1);
         w32le(&mut page, ds + 8, enc(3, 1, false));
         w32le(&mut page, ds + 12, 0x12345678);
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (_, ts) = k.read_event().unwrap();
         assert_eq!(ts, 1000 + (1u64 << 27) + 2 + 3);
     }
 
     #[test]
-    fn test_time_stamp() {
+    fn test_load_subbuffer_with_timestamp() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
         let ts_with_msb: u64 = 0xf8u64 << 56 | 0x11223344;
@@ -428,27 +432,27 @@ mod tests {
         w32le(&mut page, ds + 8, enc(0, 1, false));
         w32le(&mut page, ds + 12, 0xdead);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (_, ts) = k.read_event().unwrap();
 
         let msb = ts_with_msb & TS_MSB;
         let expected_abs = ((0x10u64) << 27) + 5 | msb;
         assert_eq!(ts, expected_abs); // delta 0 for second event
 
-        let mut page2 = make_page(false, Endian::Little, ts_with_msb, 16, 0);
-        w32le(&mut page2, ds, enc(5, TYPE_TIME_STAMP, false));
-        w32le(&mut page2, ds + 4, 0x10);
-        w32le(&mut page2, ds + 8, enc(1, 1, false));
-        w32le(&mut page2, ds + 12, 0xdead);
+        let mut page = make_page(false, Endian::Little, ts_with_msb, 16, 0);
+        w32le(&mut page, ds, enc(5, TYPE_TIME_STAMP, false));
+        w32le(&mut page, ds + 4, 0x10);
+        w32le(&mut page, ds + 8, enc(1, 1, false));
+        w32le(&mut page, ds + 12, 0xdead);
 
-        k.load_subbuffer(&page2).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (_, ts2) = k.read_event().unwrap();
 
         assert_eq!(ts2, expected_abs + 1);
     }
 
     #[test]
-    fn test_padding() {
+    fn test_load_subbuffer_with_padding() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
         let mut page = make_page(false, Endian::Little, 0, 16, 0);
@@ -457,7 +461,7 @@ mod tests {
         w32le(&mut page, ds + 8, enc(0, TYPE_PADDING, false));
         w32le(&mut page, ds + 12, 0);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         assert!(k.read_event().is_some());
         assert!(k.next_event().is_none());
@@ -465,15 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn test_needs_swap() {
-        let k = KBuffer::new(LongSize::L4, Endian::Big);
-        assert_eq!(k.needs_swap, !cfg!(target_endian = "big"));
-        let k2 = KBuffer::new(LongSize::L4, Endian::Little);
-        assert_eq!(k2.needs_swap, cfg!(target_endian = "big"));
-    }
-
-    #[test]
-    fn test_multiple_events() {
+    fn test_load_subbuffer_with_multiple_events() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
         let mut page = make_page(false, Endian::Little, 0, 24, 0);
@@ -482,7 +478,7 @@ mod tests {
         off = add_fixed(&mut page, ds, off, 1, 2, &[0x22; 4], false);
         add_fixed(&mut page, ds, off, 1, 3, &[0x33; 4], false);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         let mut cnt = 0;
         let mut last = 0;
@@ -500,6 +496,71 @@ mod tests {
     }
 
     #[test]
+    fn test_load_subbuffer_with_initial_timestamp() {
+        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
+        let ds = 12;
+        let flags: u32 = MISSING_EVENTS as u32 | MISSING_STORED as u32 | 16;
+        let mut page = make_page(false, Endian::Little, 0, 16, 8);
+        w32le(&mut page, 8, flags);
+        w32le(&mut page, ds, enc(0, TYPE_TIME_EXTEND, false));
+        w32le(&mut page, ds + 4, 0);
+        w32le(&mut page, ds + 8, enc(0, 1, false));
+        w32le(&mut page, ds + 12, 0x1234);
+        w32le(&mut page, ds + 16, 7);
+
+        k.load_subbuffer(page).unwrap();
+
+        assert_eq!(k.curr_index(), 8);
+        assert_eq!(k.missed_events(), 7);
+    }
+
+    #[test]
+    fn test_load_subbuffer_with_commit() {
+        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
+        let mut page = make_page(false, Endian::Little, 0, 20, 0);
+        w32le(&mut page, 8, 1000u32);
+        w32le(&mut page, 12, enc(0, 1, false));
+
+        k.load_subbuffer(page).unwrap();
+
+        assert!(k.subbuffer_size() <= 20);
+        assert!(k.subbuffer_size() > 0);
+    }
+
+    #[test]
+    fn test_load_subbuffer_with_fixed_type() {
+        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
+        let ds = 12;
+        let mut page = make_page(false, Endian::Little, 0, 64, 0);
+        add_fixed(&mut page, ds, 0, 7, 1, &[0xAA; 28], false);
+
+        k.load_subbuffer(page).unwrap();
+        let (ev, _) = k.read_event().unwrap();
+
+        assert_eq!(ev.len(), 28);
+        assert_eq!(k.curr_size(), 32); // 4 header + 28
+    }
+
+    #[test]
+    fn test_load_subbuffer_with_bad_page() {
+        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
+        let ds = 12;
+        let mut good = make_page(false, Endian::Little, 0, 8, 0);
+        w32le(&mut good, ds, enc(0, 1, false));
+        let old = k.load_subbuffer(good).unwrap();
+        assert_eq!(old.len(), 0);
+
+        let good_ptr = k.subbuffer.as_ptr();
+        assert!(k.read_event().is_some());
+
+        let bad = vec![0u8; 5];
+        assert!(k.load_subbuffer(bad).is_err());
+
+        assert_eq!(k.subbuffer.as_ptr(), good_ptr);
+        assert!(k.read_event().is_some());
+    }
+
+    #[test]
     fn test_missed_events() {
         let mut k = KBuffer::new(LongSize::L4, Endian::Little);
         let ds = 12;
@@ -510,7 +571,7 @@ mod tests {
         w32le(&mut page, ds + 4, 0);
         w32le(&mut page, ds + 8, 42);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         assert_eq!(k.missed_events(), 42);
 
@@ -528,41 +589,9 @@ mod tests {
         w32le(&mut page, 8, flags);
         w32le(&mut page, ds, enc(0, 1, false));
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         assert_eq!(k.missed_events(), -1);
-    }
-
-    #[test]
-    fn test_missed_events_with_initial_timestamp() {
-        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
-        let ds = 12;
-        let flags: u32 = MISSING_EVENTS as u32 | MISSING_STORED as u32 | 16;
-        let mut page = make_page(false, Endian::Little, 0, 16, 8);
-        w32le(&mut page, 8, flags);
-        w32le(&mut page, ds, enc(0, TYPE_TIME_EXTEND, false));
-        w32le(&mut page, ds + 4, 0);
-        w32le(&mut page, ds + 8, enc(0, 1, false));
-        w32le(&mut page, ds + 12, 0x1234);
-        w32le(&mut page, ds + 16, 7);
-
-        k.load_subbuffer(&page).unwrap();
-
-        assert_eq!(k.curr_index(), 8);
-        assert_eq!(k.missed_events(), 7);
-    }
-
-    #[test]
-    fn test_commit() {
-        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
-        let mut page = make_page(false, Endian::Little, 0, 20, 0);
-        w32le(&mut page, 8, 1000u32);
-        w32le(&mut page, 12, enc(0, 1, false));
-
-        k.load_subbuffer(&page).unwrap();
-
-        assert!(k.subbuffer_size() <= 20);
-        assert!(k.subbuffer_size() > 0);
     }
 
     #[test]
@@ -573,39 +602,9 @@ mod tests {
         w32le(&mut page, ds, enc(0, TYPE_TIME_EXTEND, false));
         w32le(&mut page, ds + 4, 0);
         w32le(&mut page, ds + 8, enc(0, 1, false));
-
-        k.load_subbuffer(&page).unwrap();
-
+        k.load_subbuffer(page).unwrap();
         assert_eq!(k.start_of_data(), 20);
         assert_eq!(k.data_start_offset(), 12);
-    }
-
-    #[test]
-    fn test_invalid_page() {
-        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
-
-        assert!(k.load_subbuffer(&[]).is_err());
-        assert!(k.load_subbuffer(&[0u8; 5]).is_err());
-
-        let page = make_page(false, Endian::Little, 0, 0, 0);
-
-        k.load_subbuffer(&page).unwrap();
-
-        assert!(k.read_event().is_none());
-    }
-
-    #[test]
-    fn test_fixed_type_len() {
-        let mut k = KBuffer::new(LongSize::L4, Endian::Little);
-        let ds = 12;
-        let mut page = make_page(false, Endian::Little, 0, 64, 0);
-        add_fixed(&mut page, ds, 0, 7, 1, &[0xAA; 28], false);
-
-        k.load_subbuffer(&page).unwrap();
-        let (ev, _) = k.read_event().unwrap();
-
-        assert_eq!(ev.len(), 28);
-        assert_eq!(k.curr_size(), 32); // 4 header + 28
     }
 
     #[test]
@@ -618,7 +617,7 @@ mod tests {
         off = add_fixed(&mut page, ds, off, 1, 20, &[0xBB; 4], false); // delta 20
         add_fixed(&mut page, ds, off, 1, 30, &[0xCC; 4], false); // delta 30
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
         let (ev0, ts0) = k.read_event().unwrap();
 
         assert_eq!(ev0, &[0xAA; 4]);
@@ -661,7 +660,7 @@ mod tests {
         w32le(&mut page, ds + off, enc(3, 1, false));
         page[ds + off + 4..ds + off + 8].copy_from_slice(&[0x22; 4]);
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         let (ev_a, ts_a) = k.read_event().unwrap();
         assert_eq!(ev_a, &[0x11; 4]);
@@ -687,7 +686,7 @@ mod tests {
         page[ds + 16..ds + 24].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         w32le(&mut page, ds + 24, enc(0, TYPE_PADDING, false));
 
-        k.load_subbuffer(&page).unwrap();
+        k.load_subbuffer(page).unwrap();
 
         let (ev0, ts0) = k.read_event().unwrap();
         assert_eq!(ev0.len(), 4);

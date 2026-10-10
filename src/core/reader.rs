@@ -174,9 +174,18 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
             eprintln!("cpu={cpu} short read {filled} < {subbuf_size}");
             continue;
         }
-        if let Err(e) = kbuf.load_subbuffer(&buf) {
-            eprintln!("cpu={cpu} bad subbuffer: {e}");
-            continue;
+        let page = std::mem::replace(&mut buf, Vec::new());
+        let old = match kbuf.load_subbuffer(page) {
+            Ok(old) => old,
+            Err(e) => {
+                eprintln!("cpu={cpu} bad subbuffer: {e}");
+                buf = vec![0u8; subbuf_size];
+                continue;
+            }
+        };
+        buf = old;
+        if buf.len() != subbuf_size {
+            buf.resize(subbuf_size, 0);
         }
         while let Some((data, ts)) = kbuf.read_event() {
             if let Some(event) = parse_event(data, ts, cpu, &kbuf, &tep, &handlers, &ctx, &mut seq)
