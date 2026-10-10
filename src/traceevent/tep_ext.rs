@@ -129,13 +129,17 @@ mod tests {
             }
         }
 
-        fn record(&self) -> TepRecord {
+        fn record(&self) -> TepRecord<'_> {
+            Self::record_from_data(&self.data)
+        }
+
+        fn record_from_data(data: &[u8]) -> TepRecord<'_> {
             TepRecord {
-                size: self.data.len(),
+                size: data.len(),
                 offset: 0,
                 missed_events: 0,
-                record_size: self.data.len(),
-                data: self.data.clone(),
+                record_size: data.len(),
+                data,
                 ts: 0,
                 common_type: 999,
                 cpu: 0,
@@ -166,7 +170,7 @@ mod tests {
         fx.write_i32(0, 1);
         fx.write_i32(4, 42);
 
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         assert_eq!(
             fx.handle
@@ -185,7 +189,7 @@ mod tests {
     #[test]
     fn test_parse_i64_with_nonexistent_field() {
         let mut fx = Fixture::new();
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         let err = fx
             .handle
@@ -198,7 +202,7 @@ mod tests {
     #[test]
     fn test_parse_i64_with_out_of_bounds() {
         let mut fx = Fixture::with_data_size(10); // addr at 72 won't fit
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         let err = fx
             .handle
@@ -212,7 +216,7 @@ mod tests {
     fn test_parse_i64_with_signed_negative() {
         let mut fx = Fixture::new();
         fx.write_u64(80, (-1i64) as u64);
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         assert_eq!(
             fx.handle
@@ -227,7 +231,7 @@ mod tests {
         let mut fx = Fixture::new();
         fx.write_str(8, "hello world");
         fx.write_str(40, "my-label");
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         assert_eq!(
             fx.handle
@@ -259,7 +263,7 @@ mod tests {
     #[test]
     fn test_parse_raw_with_nonexistent_field() {
         let mut fx = Fixture::new();
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         let err = fx
             .handle
@@ -276,7 +280,7 @@ mod tests {
         fx.data[9] = 0xFE;
         fx.data[10] = b'A';
         fx.data[11] = 0;
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         let s = fx
             .handle

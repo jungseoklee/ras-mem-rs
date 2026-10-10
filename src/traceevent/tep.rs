@@ -22,19 +22,20 @@ pub struct TepEvent {
     pub print_fmt: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct TepRecord {
+#[derive(Debug, Clone, Copy)]
+pub struct TepRecord<'a> {
     pub size: usize,
     pub offset: usize,
     pub missed_events: i64,
     pub record_size: usize,
-    pub data: Vec<u8>,
+    pub data: &'a [u8],
     pub ts: u64,
     pub common_type: u16,
     pub cpu: u32,
 }
 
-pub type HandlerFn<C> = Box<dyn Fn(&mut TraceSeq, &TepRecord, &TepEvent, &C) -> i32 + Send + Sync>;
+pub type HandlerFn<C> =
+    Box<dyn for<'a> Fn(&mut TraceSeq, &TepRecord<'a>, &TepEvent, &C) -> i32 + Send + Sync>;
 
 struct HandlerEntry<C> {
     handler: HandlerFn<C>,
@@ -171,7 +172,7 @@ where
     }
 
     // C: tep_find_event_by_record(tep, record)
-    pub fn find_event_by_record(&self, record: &TepRecord) -> Option<&TepEvent> {
+    pub fn find_event_by_record<'a>(&self, record: &TepRecord<'a>) -> Option<&TepEvent> {
         self.events_by_id.get(&(record.common_type as u32))
     }
 
@@ -185,7 +186,7 @@ where
         context: Arc<C>,
     ) -> RegisterStatus
     where
-        F: Fn(&mut TraceSeq, &TepRecord, &TepEvent, &C) -> i32 + Send + Sync + 'static,
+        F: for<'a> Fn(&mut TraceSeq, &TepRecord<'a>, &TepEvent, &C) -> i32 + Send + Sync + 'static,
     {
         let _ = id; // kept for API compatibility, libtraceevent allows -1 for wildcard
         let key = (sys_name.to_string(), event_name.to_string());
@@ -212,7 +213,7 @@ where
     }
 
     // C: tep_print_event(tep, s, record, fmt, ...)
-    pub fn print_event(&self, s: &mut TraceSeq, record: &TepRecord) -> i32 {
+    pub fn print_event<'a>(&self, s: &mut TraceSeq, record: &TepRecord<'a>) -> i32 {
         let event = match self.events_by_id.get(&(record.common_type as u32)) {
             Some(e) => e,
             None => return -1,
@@ -230,12 +231,12 @@ where
     }
 
     // C: tep_get_field_val(s, event, name, record, val, err)
-    pub fn get_field_val(
+    pub fn get_field_val<'a>(
         &self,
         s: &mut TraceSeq,
         event: &TepEvent,
         name: &str,
-        record: &TepRecord,
+        record: &TepRecord<'a>,
     ) -> Option<i64> {
         let _ = s;
         let f = event.fields.iter().find(|x| x.name == name)?;
@@ -447,7 +448,7 @@ print fmt: "prev_comm=%s prev_pid=%d"
             offset: 0,
             missed_events: 0,
             record_size: 64,
-            data,
+            data: &data,
             ts: 0,
             common_type: 62,
             cpu: 0,
@@ -471,7 +472,7 @@ print fmt: "prev_comm=%s prev_pid=%d"
             offset: 0,
             missed_events: 0,
             record_size: 64,
-            data,
+            data: &data,
             ts: 0,
             common_type: 62,
             cpu: 0,

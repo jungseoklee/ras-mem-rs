@@ -225,7 +225,7 @@ fn parse_event<C: Context>(
         offset: kbuf.curr_offset(),
         missed_events: kbuf.missed_events(),
         record_size: kbuf.curr_size() as usize,
-        data: data.to_vec(), // TODO: use reference instead, a.k.a, zero copy.
+        data,
         ts,
         common_type,
         cpu,

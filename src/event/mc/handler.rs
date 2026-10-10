@@ -316,13 +316,17 @@ mod tests {
             }
         }
 
-        fn record(&self) -> TepRecord {
+        fn record(&self) -> TepRecord<'_> {
+            Self::record_from_data(&self.data)
+        }
+
+        fn record_from_data(data: &[u8]) -> TepRecord<'_> {
             TepRecord {
-                size: self.data.len(),
+                size: data.len(),
                 offset: 0,
                 missed_events: 0,
-                record_size: self.data.len(),
-                data: self.data.clone(),
+                record_size: data.len(),
+                data,
                 ts: 100000,
                 common_type: 1,
                 cpu: 0,
@@ -361,7 +365,7 @@ mod tests {
         fx.write_u64(128, 0x1234);
         fx.write_str(136, "detail");
         let h = McEventHandler;
-        let rec = fx.record();
+        let rec = Fixture::record_from_data(&fx.data);
 
         let ev = h
             .parse(&fx.handle, &mut fx.seq, &fx.event, &rec, &fx.ctx)

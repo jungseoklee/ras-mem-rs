@@ -16,7 +16,7 @@ pub trait EventHandler<C: Context>: Send + Sync {
         tep: &TepHandle<C>,
         seq: &mut TraceSeq,
         event: &TepEvent,
-        record: &TepRecord,
+        record: &TepRecord<'_>,
         ctx: &C,
     ) -> Result<Event, String>;
     fn update_state(&self, event: &Event, ctx: &C);
