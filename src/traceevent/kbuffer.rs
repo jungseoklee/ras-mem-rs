@@ -337,7 +337,7 @@ mod tests {
         let ds = 12;
         let mut page = make_page(false, Endian::Little, 1000, 8, 0);
         w32le(&mut page, ds, enc(0, 1, false));
-        w32le(&mut page, ds + 4, 0xdeadbeef);
+        w32le(&mut page, ds + 4, 0xaabbccdd);
 
         k.load_subbuffer(page).unwrap();
 
@@ -430,7 +430,7 @@ mod tests {
         w32le(&mut page, ds, enc(5, TYPE_TIME_STAMP, false));
         w32le(&mut page, ds + 4, 0x10);
         w32le(&mut page, ds + 8, enc(0, 1, false));
-        w32le(&mut page, ds + 12, 0xdead);
+        w32le(&mut page, ds + 12, 0xabcd);
 
         k.load_subbuffer(page).unwrap();
         let (_, ts) = k.read_event().unwrap();
@@ -443,7 +443,7 @@ mod tests {
         w32le(&mut page, ds, enc(5, TYPE_TIME_STAMP, false));
         w32le(&mut page, ds + 4, 0x10);
         w32le(&mut page, ds + 8, enc(1, 1, false));
-        w32le(&mut page, ds + 12, 0xdead);
+        w32le(&mut page, ds + 12, 0xabcd);
 
         k.load_subbuffer(page).unwrap();
         let (_, ts2) = k.read_event().unwrap();
@@ -681,7 +681,7 @@ mod tests {
         let mut page = make_page(false, Endian::Little, 0, 48, 0);
         w32le(&mut page, ds, enc(1, 0, false));
         w32le(&mut page, ds + 4, 8);
-        page[ds + 8..ds + 12].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        page[ds + 8..ds + 12].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
         w32le(&mut page, ds + 12, enc(2, 2, false));
         page[ds + 16..ds + 24].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         w32le(&mut page, ds + 24, enc(0, TYPE_PADDING, false));
@@ -690,7 +690,7 @@ mod tests {
 
         let (ev0, ts0) = k.read_event().unwrap();
         assert_eq!(ev0.len(), 4);
-        assert_eq!(ev0, &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(ev0, &[0xaa, 0xbb, 0xcc, 0xdd]);
         assert_eq!(ts0, 1);
 
         let (ev1, ts1) = k.next_event().unwrap();

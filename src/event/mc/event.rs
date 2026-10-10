@@ -45,7 +45,6 @@ impl From<i64> for HwEventErrType {
 
 #[derive(Debug, Clone)]
 pub struct McEvent {
-    // TODO: harden type
     pub timestamp: SystemTime,
 
     pub error_count: i64,

@@ -72,15 +72,6 @@ where
         }
     }
 
-    // TODO Potential Bug #1 - parse_header_page is fragile on "commit" detection
-    // Current: if line.contains("commit") { parse_field_line(line) }
-    // Problem: Only works if the line literally contains "commit" string and
-    // assumes long_size = field.size without checking field name.
-    // On some kernels header_page format changes order.
-    // Fix: Explicitly check f.name == "commit" after parse_field_line():
-    // if let Some(f) = Self::parse_field_line(line) {
-    // if f.name == "commit" { self.long_size = f.size; }
-    // }
     // C: tep_parse_header_page(tep, buf, size, long_size)
     pub fn parse_header_page(
         &mut self,
@@ -93,9 +84,9 @@ where
         }
         for line in buf.lines() {
             let line = line.trim();
-            if line.contains("commit") {
-                if let Some(f) = Self::parse_field_line(line) {
-                    if long_size == 0 && f.size != 0 {
+            if let Some(f) = Self::parse_field_line(line) {
+                if f.name == "commit" && f.size != 0 {
+                    if long_size == 0 {
                         self.long_size = f.size;
                     }
                 }
@@ -105,14 +96,6 @@ where
         Ok(())
     }
 
-    // TODO Potential Bug #2 - parse_event truncates multi-line print fmt
-    // Current: print_fmt = l["print fmt:".len()..].trim().to_string(); in_format = false;
-    // Problem: Real tracefs format has print fmt spanning multiple lines, e.g.
-    // print fmt: "%s %d", REC->msg, REC->error_count
-    // Your code only captures first line and drops the rest.
-    // Not used for mc_event now (you use custom format_event), but will
-    // break generic trace-cmd report / tep_print_event compat.
-    // Fix: Accumulate lines until EOF or next event section, not just first line.
     // C: tep_parse_event(tep, buf, size, sys)
     pub fn parse_event(&mut self, buf: &str, size: usize, sys: &str) -> Result<u32, String> {
         let mut name = String::new();
@@ -120,10 +103,20 @@ where
         let mut fields = Vec::new();
         let mut print_fmt = String::new();
         let mut in_format = false;
+        let mut in_print_fmt = false;
         let group = sys.to_string();
 
         for line in buf.lines() {
             let l = line.trim();
+            if in_print_fmt {
+                if !l.is_empty() {
+                    if !print_fmt.is_empty() {
+                        print_fmt.push(' ');
+                    }
+                    print_fmt.push_str(l);
+                }
+                continue;
+            }
             if l.starts_with("name:") {
                 name = l["name:".len()..].trim().to_string();
             } else if l.starts_with("ID:") {
@@ -137,6 +130,7 @@ where
             } else if l.starts_with("print fmt:") {
                 print_fmt = l["print fmt:".len()..].trim().to_string();
                 in_format = false;
+                in_print_fmt = true;
             }
         }
 
@@ -250,17 +244,6 @@ where
         ))
     }
 
-    // TODO Potential Bug #3 - get_field_raw returns NUL-padded bytes, not trimmed string
-    // Current: Some((raw, raw.len())) where raw = &record.data[offset..offset+size]
-    // Problem: char[32] fields like msg, label, driver_detail are NUL-terminated
-    // C strings. If tep_ext::parse_raw does String::from_utf8_lossy(raw)
-    // without trimming \0, you get "DIMM0\0\0\0..." leaking into Event.
-    // Your handler.rs tests write_str adds explicit \0, but real kernel
-    // data will have padding.
-    // Fix: In tep_ext.rs parse_raw(), trim at first NUL:
-    // let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-    // String::from_utf8_lossy(&raw[..end]).to_string()
-    // Same for driver_detail.
     // C: tep_get_field_raw(s, event, name, record, len, err)
     pub fn get_field_raw<'a>(
         &self,
@@ -275,7 +258,13 @@ where
             return None;
         }
         let raw = &record.data[f.offset..f.offset + f.size];
-        Some((raw, raw.len()))
+        let trimmed = if f.is_string {
+            let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+            &raw[..end]
+        } else {
+            raw
+        };
+        Some((trimmed, trimmed.len()))
     }
 
     fn parse_field_line(line: &str) -> Option<Field> {
@@ -373,25 +362,45 @@ print fmt: "prev_comm=%s prev_pid=%d"
 "#
     }
 
-    fn header_page() -> &'static str {
-        r#"
-    field: unsigned short common_type; offset:0; size:2; signed:0;
-    field: unsigned char common_flags; offset:2; size:1; signed:0;
-    field: unsigned long commit; offset:0; size:8; signed:0;
-        "#
-    }
-
     #[test]
-    fn test_parse_header_page_order() {
+    fn test_parse_header_page() {
         let mut h: TepHandle<()> = TepHandle::new();
         h.long_size = 4;
-        let buf = header_page();
+        let buf = r#"
+field: unsigned short common_type; offset:0; size:2; signed:0;
+field: unsigned char common_flags; offset:2; size:1; signed:0;
+field: unsigned long commit; offset:0; size:8; signed:0;
+"#;
         h.parse_header_page(buf, buf.len(), 0).unwrap();
         assert_eq!(h.long_size, 8);
     }
 
     #[test]
-    fn test_parse_event_order() {
+    fn test_parse_header_page_with_long_size() {
+        let mut h: TepHandle<()> = TepHandle::new();
+        let buf = "";
+        h.parse_header_page(buf, buf.len(), 42).unwrap();
+        assert_eq!(h.long_size, 42);
+    }
+
+    #[test]
+    fn test_parse_header_page_with_commit_and_substring() {
+        let mut h: TepHandle<()> = TepHandle::new();
+        h.long_size = 4;
+        let buf = r#"
+field: unsigned int committed; offset:0; size:4; signed:0;
+field: unsigned int commit_id; offset:4; size:4; signed:0;
+"#;
+        h.parse_header_page(buf, buf.len(), 0).unwrap();
+        assert_eq!(h.long_size, 4);
+
+        let buf = r#"field: unsigned long commit; offset:0; size:8; signed:0;"#;
+        h.parse_header_page(buf, buf.len(), 0).unwrap();
+        assert_eq!(h.long_size, 8);
+    }
+
+    #[test]
+    fn test_parse_event() {
         let mut h: TepHandle<()> = TepHandle::new();
         let buf = sample_event_format();
         let id = h.parse_event(buf, buf.len(), "sched").unwrap();
@@ -399,7 +408,27 @@ print fmt: "prev_comm=%s prev_pid=%d"
     }
 
     #[test]
-    fn test_find_event_orders() {
+    fn test_parse_event_with_multiline_print_fmt() {
+        let mut h: TepHandle<()> = TepHandle::new();
+        let buf = r#"
+name: mc_event
+ID: 100
+format:
+    field:unsigned short common_type; offset:0; size:2; signed:0;
+    field:char msg[32]; offset:4; size:32; signed:0;
+print fmt: "msg=%s count=%d", REC->msg,
+    REC->count,
+    REC->extra
+"#;
+        h.parse_event(buf, buf.len(), "test").unwrap();
+        let ev = h.find_event(100).unwrap();
+        assert!(ev.print_fmt.contains("REC->msg"));
+        assert!(ev.print_fmt.contains("REC->count"));
+        assert!(ev.print_fmt.contains("REC->extra"));
+    }
+
+    #[test]
+    fn test_find_event() {
         let mut h: TepHandle<()> = TepHandle::new();
         let buf = sample_event_format();
         h.parse_event(buf, buf.len(), "sched").unwrap();
@@ -408,7 +437,7 @@ print fmt: "prev_comm=%s prev_pid=%d"
     }
 
     #[test]
-    fn test_register_event_handler_order() {
+    fn test_register_event_handler() {
         let mut h: TepHandle<String> = TepHandle::new();
         let buf = sample_event_format();
         h.parse_event(buf, buf.len(), "sched").unwrap();
@@ -427,7 +456,7 @@ print fmt: "prev_comm=%s prev_pid=%d"
     }
 
     #[test]
-    fn test_print_event_order() {
+    fn test_print_event() {
         let mut h: TepHandle<String> = TepHandle::new();
         let buf = sample_event_format();
         h.parse_event(buf, buf.len(), "sched").unwrap();
@@ -459,7 +488,7 @@ print fmt: "prev_comm=%s prev_pid=%d"
     }
 
     #[test]
-    fn test_get_field_val_order() {
+    fn test_get_field_val() {
         let mut h: TepHandle<()> = TepHandle::new();
         let buf = sample_event_format();
         h.parse_event(buf, buf.len(), "sched").unwrap();
@@ -486,5 +515,41 @@ print fmt: "prev_comm=%s prev_pid=%d"
             h.get_field_val(&mut seq, &ev, "prev_pid", &rec).unwrap(),
             1234
         );
+    }
+
+    #[test]
+    fn test_get_field_raw_with_nul_trim() {
+        let mut h: TepHandle<()> = TepHandle::new();
+        let fmt = r#"
+name: mc_event
+ID: 20
+format:
+    field:char label[32]; offset:0; size:32; signed:0;
+print fmt: "%s"
+"#;
+        h.parse_event(fmt, fmt.len(), "ras").unwrap();
+        let ev = h.find_event(20).unwrap().clone();
+        let mut data = vec![0u8; 32];
+        data[0..5].copy_from_slice(b"dimm0");
+        data[5] = 0;
+        let rec = TepRecord {
+            size: 32,
+            offset: 0,
+            missed_events: 0,
+            record_size: 32,
+            data: &data,
+            ts: 0,
+            common_type: 20,
+            cpu: 0,
+        };
+        let mut seq = TraceSeq::new();
+        let (raw, len) = h.get_field_raw(&mut seq, &ev, "label", &rec).unwrap();
+        // old returned 32 bytes with NULs, fixed returns 5
+        assert_eq!(len, 5);
+        assert_eq!(raw, b"dimm0");
+        // emulate what caller would do in tep_ext.rs: String::from_utf8_lossy
+        let s = String::from_utf8_lossy(raw).to_string();
+        assert_eq!(s, "dimm0");
+        assert!(!raw.contains(&0u8));
     }
 }
