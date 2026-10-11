@@ -19,5 +19,5 @@ pub trait EventHandler<C: Context>: Send + Sync {
         record: &TepRecord<'_>,
         ctx: &C,
     ) -> Result<Event, String>;
-    fn update_state(&self, event: &Event, ctx: &C);
+    fn process(&self, event: &Event, ctx: &C);
 }

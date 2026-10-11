@@ -7,3 +7,11 @@ use crate::event::mc::McEvent;
 pub enum Event {
     Mc(McEvent),
 }
+
+#[derive(Debug, Clone)]
+pub struct Message {
+    pub event: Event,
+    pub id: u32,
+    pub cpu: u32,
+    pub ts: u64,
+}

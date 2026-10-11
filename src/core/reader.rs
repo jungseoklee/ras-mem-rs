@@ -7,13 +7,13 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+use crate::event::Message;
 use crate::traceevent::common::{Endian, LongSize};
 use crate::traceevent::kbuffer::KBuffer;
 use crate::traceevent::tep::TepRecord;
 use crate::traceevent::trace_seq::TraceSeq;
 use crate::{
     core::{context::Context, handler::EventHandler},
-    event::Event,
     fs::tracefs::TraceFs,
     traceevent::tep::TepHandle,
 };
@@ -29,15 +29,12 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
     pub fn new(
         fs: TraceFs,
         tep: Arc<TepHandle<C>>,
-        handlers: HashMap<(String, String), Arc<dyn EventHandler<C>>>,
+        handlers: HashMap<u32, Arc<dyn EventHandler<C>>>,
         ctx: Arc<C>,
     ) -> Self {
         Self {
             fs,
-            handlers: handlers
-                .into_iter()
-                .filter_map(|((g, n), h)| Some((tep.find_event_by_name(&g, &n)?.id, h)))
-                .collect(),
+            handlers,
             tep,
             ctx,
         }
@@ -45,7 +42,7 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
 
     pub async fn run(
         self,
-        tx: mpsc::Sender<Event>,
+        tx: mpsc::Sender<Message>,
         cancel: CancellationToken,
     ) -> anyhow::Result<()> {
         let Self {
@@ -123,7 +120,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
     tep: Arc<TepHandle<C>>,
     handlers: Arc<HashMap<u32, Arc<dyn EventHandler<C>>>>,
     ctx: Arc<C>,
-    tx: mpsc::Sender<Event>,
+    tx: mpsc::Sender<Message>,
     cancel: CancellationToken,
     subbuf_size: usize,
 ) -> anyhow::Result<()> {
@@ -188,9 +185,9 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
             buf.resize(subbuf_size, 0);
         }
         while let Some((data, ts)) = kbuf.read_event() {
-            if let Some(event) = parse_event(data, ts, cpu, &kbuf, &tep, &handlers, &ctx, &mut seq)
+            if let Some(msg) = build_message(data, ts, cpu, &kbuf, &tep, &handlers, &ctx, &mut seq)
             {
-                if tx.send(event).await.is_err() {
+                if tx.send(msg).await.is_err() {
                     return Ok(());
                 }
             }
@@ -199,7 +196,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
     anyhow::Ok(())
 }
 
-fn parse_event<C: Context>(
+fn build_message<C: Context>(
     data: &[u8],
     ts: u64,
     cpu: u32,
@@ -208,7 +205,7 @@ fn parse_event<C: Context>(
     handlers: &HashMap<u32, Arc<dyn EventHandler<C>>>,
     ctx: &C,
     seq: &mut TraceSeq,
-) -> Option<Event> {
+) -> Option<Message> {
     if data.len() < 2 {
         return None;
     }
@@ -234,7 +231,12 @@ fn parse_event<C: Context>(
     let h = handlers.get(&event.id)?;
     seq.reset();
     match h.parse(tep, seq, event, &record, ctx) {
-        Ok(ev) => Some(ev),
+        Ok(ev) => Some(Message {
+            event: ev,
+            id: event.id,
+            cpu,
+            ts,
+        }),
         Err(e) => {
             eprintln!("cpu={cpu} id={} parse failed: {e:#}", event.id);
             None
@@ -303,7 +305,7 @@ mod tests {
                 return Err("failure".into());
             }
             Ok(Event::Mc(McEvent {
-                timestamp: UNIX_EPOCH + Duration::from_secs(rec.ts),
+                timestamp: UNIX_EPOCH + Duration::from_nanos(rec.ts),
                 error_count: 1,
                 error_type: HwEventErrType::Corrected,
                 msg: "msg".into(),
@@ -318,15 +320,14 @@ mod tests {
                 driver_detail: "".into(),
             }))
         }
-        fn update_state(&self, _event: &Event, _ctx: &C) {}
+        fn process(&self, _event: &Event, _ctx: &C) {}
     }
 
     struct Fixture {
         tmp: TempDir,
         tep: Arc<TepHandle<TestContext>>,
         kbuf: KBuffer,
-        handlers: HashMap<(String, String), Arc<dyn EventHandler<TestContext>>>,
-        handlers_by_id: HashMap<u32, Arc<dyn EventHandler<TestContext>>>,
+        handlers: HashMap<u32, Arc<dyn EventHandler<TestContext>>>,
         seq: TraceSeq,
         ctx: Arc<TestContext>,
         data: Vec<u8>,
@@ -335,16 +336,8 @@ mod tests {
         fn new() -> Self {
             let tmp = TempDir::new().unwrap();
 
-            let mut handlers: HashMap<(String, String), Arc<dyn EventHandler<TestContext>>> =
-                HashMap::new();
-            handlers.insert(
-                ("group".into(), "name".into()),
-                Arc::new(TestHandler { failure: false }),
-            );
-            handlers.insert(
-                ("noop".into(), "noop".into()),
-                Arc::new(TestHandler { failure: false }),
-            );
+            let mut handlers = HashMap::new();
+            handlers.insert(42, Arc::new(TestHandler { failure: false }) as _);
 
             let mut tep = TepHandle::new();
             tep.events_by_id.insert(
@@ -364,7 +357,6 @@ mod tests {
                 tep: Arc::new(tep),
                 kbuf: KBuffer::new(LongSize::SameAsHost, Endian::SameAsHost),
                 handlers,
-                handlers_by_id: HashMap::new(),
                 seq: TraceSeq::new(),
                 ctx: Arc::new(TestContext {
                     config: Config::default(),
@@ -376,17 +368,7 @@ mod tests {
                     d
                 },
             };
-            ret.refresh_handlers_by_id();
             ret
-        }
-
-        fn refresh_handlers_by_id(&mut self) {
-            self.handlers_by_id.clear();
-            for ((g, n), h) in &self.handlers {
-                if let Some(id) = self.tep.ids_by_name.get(&(g.clone(), n.clone())) {
-                    self.handlers_by_id.insert(*id, h.clone());
-                }
-            }
         }
 
         fn with_common_type(mut self, id: u16) -> Self {
@@ -395,11 +377,8 @@ mod tests {
         }
 
         fn with_failure(mut self) -> Self {
-            let h: Arc<dyn EventHandler<TestContext>> = Arc::new(TestHandler { failure: true });
-            // update both maps, keep invariant
             self.handlers
-                .insert(("group".into(), "name".into()), h.clone());
-            self.refresh_handlers_by_id();
+                .insert(42, Arc::new(TestHandler { failure: true }));
             self
         }
 
@@ -470,39 +449,39 @@ mod tests {
         b[off..off + 4].copy_from_slice(&v.to_le_bytes());
     }
 
-    macro_rules! parse_event {
+    macro_rules! build_message {
         ($fx:expr) => {
-            super::parse_event(
+            super::build_message(
                 &$fx.data,
                 100,
                 3,
                 &$fx.kbuf,
                 &$fx.tep,
-                &$fx.handlers_by_id,
+                &$fx.handlers,
                 &$fx.ctx,
                 &mut $fx.seq,
             )
         };
         ($fx:expr, ts = $ts:expr, cpu = $cpu:expr) => {
-            super::parse_event(
+            super::build_message(
                 &$fx.data,
                 $ts,
                 $cpu,
                 &$fx.kbuf,
                 &$fx.tep,
-                &$fx.handlers_by_id,
+                &$fx.handlers,
                 &$fx.ctx,
                 &mut $fx.seq,
             )
         };
         ($fx:expr, $data:expr) => {
-            super::parse_event(
+            super::build_message(
                 $data,
                 100,
                 3,
                 &$fx.kbuf,
                 &$fx.tep,
-                &$fx.handlers_by_id,
+                &$fx.handlers,
                 &$fx.ctx,
                 &mut $fx.seq,
             )
@@ -521,11 +500,11 @@ mod tests {
 
         let h = tokio::spawn(async move { reader.run(tx, token_cloned).await });
 
-        let ev = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+        let msg = tokio::time::timeout(Duration::from_millis(100), rx.recv())
             .await
             .unwrap()
             .unwrap();
-        assert!(matches!(ev, Event::Mc(_)));
+        assert!(matches!(msg.event, Event::Mc(_)));
         token.cancel();
         let _ = tokio::time::timeout(Duration::from_millis(100), h).await;
     }
@@ -561,7 +540,7 @@ mod tests {
             0,
             fd,
             fx.tep,
-            Arc::new(fx.handlers_by_id),
+            Arc::new(fx.handlers),
             fx.ctx,
             tx,
             token.clone(),
@@ -587,7 +566,7 @@ mod tests {
             0,
             fd,
             fx.tep,
-            Arc::new(fx.handlers_by_id),
+            Arc::new(fx.handlers),
             fx.ctx,
             tx,
             CancellationToken::new(),
@@ -597,35 +576,40 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_event() {
+    fn test_build_message() {
         let mut fx = Fixture::new();
 
-        let Some(Event::Mc(mc)) = parse_event!(fx) else {
+        let Some(msg) = build_message!(fx) else {
             panic!()
         };
 
-        assert_eq!(mc.mc_index, 3);
-        assert_eq!(mc.label, "dimm0");
+        match msg.event {
+            Event::Mc(mc) => {
+                assert_eq!(mc.mc_index, 3);
+                assert_eq!(mc.label, "dimm0");
+            }
+            _ => panic!(),
+        }
     }
 
     #[test]
-    fn test_parse_event_with_one_byte_data() {
+    fn test_build_message_with_one_byte_data() {
         let mut fx = Fixture::new();
 
-        assert!(parse_event!(fx, &[0u8; 1]).is_none());
+        assert!(build_message!(fx, &[0u8; 1]).is_none());
     }
 
     #[test]
-    fn test_parse_event_with_unknown_common_type() {
+    fn test_build_message_with_unknown_common_type() {
         let mut fx = Fixture::new().with_common_type(999);
 
-        assert!(parse_event!(fx).is_none());
+        assert!(build_message!(fx).is_none());
     }
 
     #[test]
-    fn test_parse_event_with_failure() {
+    fn test_build_message_with_failure() {
         let mut fx = Fixture::new().with_failure();
 
-        assert!(parse_event!(fx).is_none());
+        assert!(build_message!(fx).is_none());
     }
 }

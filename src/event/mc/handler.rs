@@ -64,7 +64,7 @@ impl<C: Context> EventHandler<C> for McEventHandler {
         Ok(Event::Mc(mc_event))
     }
 
-    fn update_state(&self, event: &Event, ctx: &C) {
+    fn process(&self, event: &Event, ctx: &C) {
         let Event::Mc(ev) = event else {
             return;
         };
@@ -405,10 +405,10 @@ mod tests {
             driver_detail: "".into(),
         });
 
-        h.update_state(&ev, &fx.ctx);
+        h.process(&ev, &fx.ctx);
         assert_eq!(fx.ctx.state.mc_state.lock().unwrap().per_sec, 3);
 
-        h.update_state(&ev, &fx.ctx);
+        h.process(&ev, &fx.ctx);
         assert_eq!(fx.ctx.state.mc_state.lock().unwrap().per_sec, 6);
 
         let fatal = crate::event::Event::Mc(McEvent {
@@ -427,7 +427,7 @@ mod tests {
             driver_detail: "".into(),
         });
 
-        h.update_state(&fatal, &fx.ctx);
+        h.process(&fatal, &fx.ctx);
 
         assert_eq!(fx.ctx.state.mc_state.lock().unwrap().per_sec, 6);
     }
