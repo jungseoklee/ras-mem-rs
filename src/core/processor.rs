@@ -21,13 +21,13 @@ impl<C: Context + Send + Sync + 'static> EventProcessor<C> {
     pub async fn run(
         self,
         mut rx: mpsc::Receiver<Message>,
-        cancel: CancellationToken,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
         let Self { handlers, ctx } = self;
 
         loop {
             let msg = tokio::select! {
-                _ = cancel.cancelled() => break,
+                _ = cancellation_token.cancelled() => break,
                 message = rx.recv() => match message {
                     Some(e) => e,
                     None => break,

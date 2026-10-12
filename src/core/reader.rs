@@ -43,7 +43,7 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
     pub async fn run(
         self,
         tx: mpsc::Sender<Message>,
-        cancel: CancellationToken,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
         let Self {
             fs,
@@ -84,7 +84,7 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
                 handlers.clone(),
                 ctx.clone(),
                 tx.clone(),
-                cancel.clone(),
+                cancellation_token.clone(),
                 subbuf_size,
             ));
         }
@@ -121,7 +121,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
     handlers: Arc<HashMap<u32, Arc<dyn EventHandler<C>>>>,
     ctx: Arc<C>,
     tx: mpsc::Sender<Message>,
-    cancel: CancellationToken,
+    cancellation_token: CancellationToken,
     subbuf_size: usize,
 ) -> anyhow::Result<()> {
     let mut kbuf = KBuffer::new(LongSize::SameAsHost, Endian::SameAsHost);
@@ -129,13 +129,13 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
     let mut seq = TraceSeq::new();
 
     loop {
-        if cancel.is_cancelled() || tx.is_closed() {
+        if cancellation_token.is_cancelled() || tx.is_closed() {
             break;
         }
 
         let mut filled: usize = 0;
         while filled < subbuf_size {
-            if cancel.is_cancelled() || tx.is_closed() {
+            if cancellation_token.is_cancelled() || tx.is_closed() {
                 break;
             }
             let mut guard = tokio::select! {
@@ -143,7 +143,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
                     Ok(g) => g,
                     Err(_) => continue,
                 },
-                _ = cancel.cancelled() => break,
+                _ = cancellation_token.cancelled() => break,
             };
             match guard.try_io(|inner| {
                 use std::io::Read;
@@ -163,13 +163,14 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
                 Err(_would_block) => continue,
             }
         }
-        if filled == 0 {
-            continue;
-        }
         if filled < subbuf_size {
             // partial should not happen on real tracefs, treat as bad page
             eprintln!("cpu={cpu} short read {filled} < {subbuf_size}");
-            continue;
+            // TODO: Shoud we continue as below? Is there any chance to see malformed data?
+            //
+            // buf = vec![0u8; subbuf_size]
+            // continue;
+            break;
         }
         let page = std::mem::replace(&mut buf, Vec::new());
         let old = match kbuf.load_subbuffer(page) {
