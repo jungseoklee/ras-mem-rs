@@ -1,43 +1,60 @@
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use crate::core::instance::Instance;
 
 #[derive(Debug)]
 pub struct TraceFs {
-    root: PathBuf, // ../instances/{name}
+    root: PathBuf,          // /sys/kernel/tracing
+    instance_root: PathBuf, // /sys/kernel/tracing/instances/{name}
 }
 
 impl TraceFs {
-    pub fn from_root(name: &str) -> anyhow::Result<Self> {
-        let path = super::mount::find_tracing_dir()
-            .ok_or_else(|| anyhow::anyhow!("tracing fs not mounted"))?;
-        Self::from_path(path, name)
-    }
-
     pub fn from_instance(instance: Instance) -> anyhow::Result<Self> {
-        let fs = Self::from_root(instance.name())?;
+        let root = super::mount::find_tracing_dir()
+            .ok_or_else(|| anyhow::anyhow!("tracing fs not mounted"))?;
+
+        let fs = Self::from_path(root, instance.name())?;
         fs.clear()?;
         fs.set_buffer_size_kb(instance.buffer_size_kb())?;
         fs.set_buffer_percent(instance.buffer_percent())?;
         Ok(fs)
     }
 
-    pub(crate) fn from_path(tracing_root: PathBuf, name: &str) -> anyhow::Result<Self> {
-        if !tracing_root.join("instances").exists() {
+    pub(crate) fn from_path(root: PathBuf, name: &str) -> anyhow::Result<Self> {
+        if !root.join("instances").exists() {
             anyhow::bail!("3.15+ kernel required");
         }
 
-        let root = tracing_root.join(format!("instances/{name}"));
-        fs::create_dir_all(&root)?;
+        let instance_root = root.join(format!("instances/{name}"));
+        fs::create_dir_all(&instance_root)?;
 
-        if !root.join("set_event").exists() {
+        if !instance_root.join("set_event").exists() {
             anyhow::bail!("set_event not found");
         }
-        anyhow::Ok(Self { root })
+        anyhow::Ok(Self {
+            root,
+            instance_root,
+        })
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn instance_root(&self) -> &Path {
+        &self.instance_root
+    }
+
+    pub fn header_page_path(&self) -> PathBuf {
+        self.root.join("events/header_page")
+    }
+
+    pub fn event_format_path(&self, group: &str, name: &str) -> PathBuf {
+        self.root.join(format!("events/{}/{}/format", group, name))
     }
 
     pub fn enable<I, S>(&self, events: I) -> anyhow::Result<()>
@@ -65,12 +82,12 @@ impl TraceFs {
     }
 
     pub fn clear(&self) -> anyhow::Result<()> {
-        fs::write(self.set_event_path(), "")?;
+        fs::write(self.set_event(), "")?;
         anyhow::Ok(())
     }
 
     pub fn set_buffer_size_kb(&self, kb: u64) -> anyhow::Result<()> {
-        fs::write(self.root.join("buffer_size_kb"), kb.to_string())?;
+        fs::write(self.instance_root.join("buffer_size_kb"), kb.to_string())?;
         anyhow::Ok(())
     }
 
@@ -78,7 +95,7 @@ impl TraceFs {
         if pct > 100 {
             anyhow::bail!("buffer_percent must be 0..100");
         }
-        fs::write(self.root.join("buffer_percent"), pct.to_string())?;
+        fs::write(self.instance_root.join("buffer_percent"), pct.to_string())?;
         anyhow::Ok(())
     }
 
@@ -87,12 +104,12 @@ impl TraceFs {
     }
 
     pub fn buffer_subbuf_size_kb(&self) -> anyhow::Result<usize> {
-        let size_kb = fs::read_to_string(self.root.join("buffer_subbuf_size_kb"))?;
+        let size_kb = fs::read_to_string(self.instance_root.join("buffer_subbuf_size_kb"))?;
         Ok(size_kb.trim().parse()?)
     }
 
     pub fn per_cpu_trace_pipe_raw(&self) -> anyhow::Result<Vec<(u32, PathBuf)>> {
-        let per_cpu = self.root.join("per_cpu");
+        let per_cpu = self.instance_root.join("per_cpu");
         anyhow::ensure!(per_cpu.exists(), "per_cpu not found at {per_cpu:?}");
 
         // TODO: handle offline cpus, e.g. we might need to check a list of online and offline periodically
@@ -124,13 +141,13 @@ impl TraceFs {
         let mut f = OpenOptions::new()
             .write(true)
             .append(true)
-            .open(self.set_event_path())?;
+            .open(self.set_event())?;
         f.write_all(payload.as_bytes())?;
         anyhow::Ok(())
     }
 
-    fn set_event_path(&self) -> PathBuf {
-        self.root.join("set_event")
+    fn set_event(&self) -> PathBuf {
+        self.instance_root.join("set_event")
     }
 }
 
@@ -141,9 +158,9 @@ mod tests {
 
     fn fs_with_name(name: &str) -> (TempDir, TraceFs) {
         let tmp = TempDir::new().unwrap();
-        let tracing_root = tmp.path().to_path_buf(); // owned, borrow ends
+        let root = tmp.path().to_path_buf(); // owned, borrow ends
 
-        let instance = tracing_root.join(format!("instances/{name}"));
+        let instance = root.join(format!("instances/{name}"));
         fs::create_dir_all(instance.join("per_cpu/cpu0")).unwrap();
         fs::create_dir_all(instance.join("per_cpu/cpu1")).unwrap();
         fs::File::create(instance.join("set_event")).unwrap();
@@ -154,7 +171,7 @@ mod tests {
         fs::File::create(instance.join("per_cpu/cpu1/trace_pipe_raw")).unwrap();
         fs::write(instance.join("buffer_subbuf_size_kb"), "42").unwrap();
 
-        let fs = TraceFs::from_path(tracing_root, name).unwrap();
+        let fs = TraceFs::from_path(root, name).unwrap();
         (tmp, fs)
     }
 
@@ -163,7 +180,7 @@ mod tests {
     }
 
     fn read(fs: &TraceFs) -> String {
-        fs::read_to_string(fs.set_event_path()).unwrap_or_default()
+        fs::read_to_string(fs.set_event()).unwrap_or_default()
     }
 
     #[test]
@@ -265,11 +282,11 @@ mod tests {
         fs.set_buffer_size_kb(8192).unwrap();
         fs.set_buffer_percent(0).unwrap();
         assert_eq!(
-            fs::read_to_string(fs.root.join("buffer_size_kb")).unwrap(),
+            fs::read_to_string(fs.instance_root.join("buffer_size_kb")).unwrap(),
             "8192"
         );
         assert_eq!(
-            fs::read_to_string(fs.root.join("buffer_percent")).unwrap(),
+            fs::read_to_string(fs.instance_root.join("buffer_percent")).unwrap(),
             "0"
         );
 
@@ -277,7 +294,7 @@ mod tests {
         fs.set_buffer_size_kb(1024).unwrap();
         fs.set_buffer_percent(50).unwrap();
         assert_eq!(
-            fs::read_to_string(fs.root.join("buffer_size_kb")).unwrap(),
+            fs::read_to_string(fs.instance_root.join("buffer_size_kb")).unwrap(),
             "1024"
         );
     }
