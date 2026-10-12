@@ -90,7 +90,7 @@ mod test {
         }
         fn parse(
             &self,
-            _tep: &TepHandle<C>,
+            _tep: &TepHandle,
             _seq: &mut TraceSeq,
             _event: &TepEvent,
             _record: &TepRecord<'_>,

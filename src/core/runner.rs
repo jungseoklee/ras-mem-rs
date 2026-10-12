@@ -37,7 +37,7 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
 
     anyhow::ensure!(!header_page.trim().is_empty(), "header_page: empty");
 
-    let mut tep = TepHandle::<C>::new();
+    let mut tep = TepHandle::new();
     tep.parse_header_page(&header_page, header_page.len(), 0)
         .map_err(|e| anyhow::anyhow!("parse_header_page: {e}"))?;
 
@@ -139,7 +139,7 @@ mod tests {
         }
         fn parse(
             &self,
-            _tep: &TepHandle<C>,
+            _tep: &TepHandle,
             _seq: &mut TraceSeq,
             _event: &TepEvent,
             rec: &TepRecord,

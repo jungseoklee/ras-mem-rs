@@ -1,10 +1,7 @@
 use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
 use crate::traceevent::trace_seq::TraceSeq;
 
-pub trait TepHandleExt<C>
-where
-    C: Send + Sync + 'static,
-{
+pub trait TepHandleExt {
     fn parse_i64(
         &self,
         seq: &mut TraceSeq,
@@ -22,10 +19,7 @@ where
     ) -> Result<String, String>;
 }
 
-impl<C> TepHandleExt<C> for TepHandle<C>
-where
-    C: Send + Sync + 'static,
-{
+impl TepHandleExt for TepHandle {
     fn parse_i64(
         &self,
         seq: &mut TraceSeq,
@@ -60,7 +54,7 @@ mod tests {
     use crate::traceevent::trace_seq::TraceSeq;
 
     struct Fixture {
-        handle: TepHandle<()>,
+        handle: TepHandle,
         event: TepEvent,
         seq: TraceSeq,
         data: Vec<u8>,

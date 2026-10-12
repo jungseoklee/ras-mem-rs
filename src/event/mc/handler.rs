@@ -27,7 +27,7 @@ impl<C: Context> EventHandler<C> for McEventHandler {
 
     fn parse(
         &self,
-        tep: &TepHandle<C>,
+        tep: &TepHandle,
         seq: &mut TraceSeq,
         event: &TepEvent,
         record: &TepRecord,
@@ -150,10 +150,6 @@ impl McEventHandler {
         s.push(')');
         s
     }
-
-    pub fn format_to_seq(ev: &McEvent, seq: &mut TraceSeq, level: &str) {
-        seq.push_str(&Self::format_event(ev, level));
-    }
 }
 
 fn format_timestamp(now: &SystemTime) -> String {
@@ -192,7 +188,7 @@ mod tests {
     }
 
     struct Fixture {
-        handle: TepHandle<TestContext>,
+        handle: TepHandle,
         event: TepEvent,
         seq: TraceSeq,
         data: Vec<u8>,

@@ -13,7 +13,7 @@ pub trait EventHandler<C: Context>: Send + Sync {
     fn instance(&self) -> Instance;
     fn parse(
         &self,
-        tep: &TepHandle<C>,
+        tep: &TepHandle,
         seq: &mut TraceSeq,
         event: &TepEvent,
         record: &TepRecord<'_>,

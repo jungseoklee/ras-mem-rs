@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::traceevent::common::Endian;
 use crate::traceevent::trace_seq::TraceSeq;
@@ -34,41 +33,20 @@ pub struct TepRecord<'a> {
     pub cpu: u32,
 }
 
-pub type HandlerFn<C> =
-    Box<dyn for<'a> Fn(&mut TraceSeq, &TepRecord<'a>, &TepEvent, &C) -> i32 + Send + Sync>;
-
-struct HandlerEntry<C> {
-    handler: HandlerFn<C>,
-    context: Arc<C>,
-}
-
-pub struct TepHandle<C = ()> {
+pub struct TepHandle {
     pub endian: Endian,
     pub long_size: usize,
     pub events_by_id: HashMap<u32, TepEvent>,
     pub ids_by_name: HashMap<(String, String), u32>,
-    handlers: HashMap<(String, String), HandlerEntry<C>>,
-    pub page_size: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterStatus {
-    Success = 0,
-    SuccessOverwrite = 1,
-}
-
-impl<C> TepHandle<C>
-where
-    C: Send + Sync + 'static,
-{
+impl TepHandle {
     pub fn new() -> Self {
         Self {
             endian: Endian::default(),
             long_size: std::mem::size_of::<usize>(),
             events_by_id: HashMap::new(),
             ids_by_name: HashMap::new(),
-            handlers: HashMap::new(),
-            page_size: 4096,
         }
     }
 
@@ -168,60 +146,6 @@ where
     // C: tep_find_event_by_record(tep, record)
     pub fn find_event_by_record<'a>(&self, record: &TepRecord<'a>) -> Option<&TepEvent> {
         self.events_by_id.get(&(record.common_type as u32))
-    }
-
-    // C: tep_register_event_handler(tep, id, sys_name, event_name, func, context)
-    pub fn register_event_handler<F>(
-        &mut self,
-        id: i32,
-        sys_name: &str,
-        event_name: &str,
-        func: F,
-        context: Arc<C>,
-    ) -> RegisterStatus
-    where
-        F: for<'a> Fn(&mut TraceSeq, &TepRecord<'a>, &TepEvent, &C) -> i32 + Send + Sync + 'static,
-    {
-        let _ = id; // kept for API compatibility, libtraceevent allows -1 for wildcard
-        let key = (sys_name.to_string(), event_name.to_string());
-        let existed = self.handlers.contains_key(&key);
-        self.handlers.insert(
-            key,
-            HandlerEntry {
-                handler: Box::new(func),
-                context,
-            },
-        );
-        if existed {
-            RegisterStatus::SuccessOverwrite
-        } else {
-            RegisterStatus::Success
-        }
-    }
-
-    // C: tep_unregister_event_handler(tep, id, sys_name, event_name, func, context)
-    pub fn unregister_event_handler(&mut self, id: i32, sys_name: &str, event_name: &str) {
-        let _ = id;
-        self.handlers
-            .remove(&(sys_name.to_string(), event_name.to_string()));
-    }
-
-    // C: tep_print_event(tep, s, record, fmt, ...)
-    pub fn print_event<'a>(&self, s: &mut TraceSeq, record: &TepRecord<'a>) -> i32 {
-        let event = match self.events_by_id.get(&(record.common_type as u32)) {
-            Some(e) => e,
-            None => return -1,
-        };
-        let key = (event.group.clone(), event.name.clone());
-        if let Some(entry) = self.handlers.get(&key) {
-            (entry.handler)(s, record, event, &entry.context)
-        } else {
-            s.push_str(&format!(
-                "{}:{} raw={:?}",
-                event.group, event.name, record.data
-            ));
-            0
-        }
     }
 
     // C: tep_get_field_val(s, event, name, record, val, err)
@@ -330,10 +254,7 @@ where
     }
 }
 
-impl<C> Default for TepHandle<C>
-where
-    C: Send + Sync + 'static,
-{
+impl Default for TepHandle {
     fn default() -> Self {
         Self::new()
     }
@@ -342,7 +263,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     fn sample_event_format() -> &'static str {
         r#"
@@ -364,7 +284,7 @@ print fmt: "prev_comm=%s prev_pid=%d"
 
     #[test]
     fn test_parse_header_page() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         h.long_size = 4;
         let buf = r#"
 field: unsigned short common_type; offset:0; size:2; signed:0;
@@ -377,7 +297,7 @@ field: unsigned long commit; offset:0; size:8; signed:0;
 
     #[test]
     fn test_parse_header_page_with_long_size() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         let buf = "";
         h.parse_header_page(buf, buf.len(), 42).unwrap();
         assert_eq!(h.long_size, 42);
@@ -385,7 +305,7 @@ field: unsigned long commit; offset:0; size:8; signed:0;
 
     #[test]
     fn test_parse_header_page_with_commit_and_substring() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         h.long_size = 4;
         let buf = r#"
 field: unsigned int committed; offset:0; size:4; signed:0;
@@ -401,7 +321,7 @@ field: unsigned int commit_id; offset:4; size:4; signed:0;
 
     #[test]
     fn test_parse_event() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         let buf = sample_event_format();
         let id = h.parse_event(buf, buf.len(), "sched").unwrap();
         assert_eq!(id, 62);
@@ -409,7 +329,7 @@ field: unsigned int commit_id; offset:4; size:4; signed:0;
 
     #[test]
     fn test_parse_event_with_multiline_print_fmt() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         let buf = r#"
 name: mc_event
 ID: 100
@@ -429,7 +349,7 @@ print fmt: "msg=%s count=%d", REC->msg,
 
     #[test]
     fn test_find_event() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         let buf = sample_event_format();
         h.parse_event(buf, buf.len(), "sched").unwrap();
         assert!(h.find_event(62).is_some());
@@ -437,59 +357,8 @@ print fmt: "msg=%s count=%d", REC->msg,
     }
 
     #[test]
-    fn test_register_event_handler() {
-        let mut h: TepHandle<String> = TepHandle::new();
-        let buf = sample_event_format();
-        h.parse_event(buf, buf.len(), "sched").unwrap();
-        let ctx = Arc::new("ctx".to_string());
-        let status = h.register_event_handler(
-            -1,
-            "sched",
-            "sched_switch",
-            |_seq, _rec, _ev, _ctx| 0,
-            ctx.clone(),
-        );
-        assert_eq!(status, RegisterStatus::Success);
-        let status2 =
-            h.register_event_handler(62, "sched", "sched_switch", |_seq, _rec, _ev, _ctx| 1, ctx);
-        assert_eq!(status2, RegisterStatus::SuccessOverwrite);
-    }
-
-    #[test]
-    fn test_print_event() {
-        let mut h: TepHandle<String> = TepHandle::new();
-        let buf = sample_event_format();
-        h.parse_event(buf, buf.len(), "sched").unwrap();
-        h.register_event_handler(
-            -1,
-            "sched",
-            "sched_switch",
-            |seq, _rec, ev, ctx| {
-                seq.push_str(&format!("handled {} ctx={}", ev.name, ctx));
-                42
-            },
-            Arc::new("myctx".to_string()),
-        );
-        let mut data = vec![0u8; 64];
-        data[0] = 62;
-        let rec = TepRecord {
-            size: 64,
-            offset: 0,
-            missed_events: 0,
-            record_size: 64,
-            data: &data,
-            ts: 0,
-            common_type: 62,
-            cpu: 0,
-        };
-        let mut seq = TraceSeq::new();
-        let ret = h.print_event(&mut seq, &rec);
-        assert_eq!(ret, 42);
-    }
-
-    #[test]
     fn test_get_field_val() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         let buf = sample_event_format();
         h.parse_event(buf, buf.len(), "sched").unwrap();
         let mut data = vec![0u8; 64];
@@ -519,7 +388,7 @@ print fmt: "msg=%s count=%d", REC->msg,
 
     #[test]
     fn test_get_field_raw_with_nul_trim() {
-        let mut h: TepHandle<()> = TepHandle::new();
+        let mut h: TepHandle = TepHandle::new();
         let fmt = r#"
 name: mc_event
 ID: 20

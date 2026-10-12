@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
                         run_instance_pipeline(instance, cxt_clone, ct_clone, 1024).await
                     })
                 })();
-                if let Err(e) = &res {
+                if let Err(_e) = &res {
                     ct_for_thread.cancel();
                 }
                 res

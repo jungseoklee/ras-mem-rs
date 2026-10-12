@@ -20,7 +20,7 @@ use crate::{
 
 pub struct TraceReader<C: Context + 'static> {
     fs: TraceFs,
-    tep: Arc<TepHandle<C>>,
+    tep: Arc<TepHandle>,
     handlers: HashMap<u32, Arc<dyn EventHandler<C>>>,
     ctx: Arc<C>,
 }
@@ -28,7 +28,7 @@ pub struct TraceReader<C: Context + 'static> {
 impl<C: Context + Send + Sync + 'static> TraceReader<C> {
     pub fn new(
         fs: TraceFs,
-        tep: Arc<TepHandle<C>>,
+        tep: Arc<TepHandle>,
         handlers: HashMap<u32, Arc<dyn EventHandler<C>>>,
         ctx: Arc<C>,
     ) -> Self {
@@ -117,7 +117,7 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
 async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
     cpu: u32,
     fd: AsyncFd<File>,
-    tep: Arc<TepHandle<C>>,
+    tep: Arc<TepHandle>,
     handlers: Arc<HashMap<u32, Arc<dyn EventHandler<C>>>>,
     ctx: Arc<C>,
     tx: mpsc::Sender<Message>,
@@ -202,7 +202,7 @@ fn build_message<C: Context>(
     ts: u64,
     cpu: u32,
     kbuf: &KBuffer,
-    tep: &TepHandle<C>,
+    tep: &TepHandle,
     handlers: &HashMap<u32, Arc<dyn EventHandler<C>>>,
     ctx: &C,
     seq: &mut TraceSeq,
@@ -296,7 +296,7 @@ mod tests {
         }
         fn parse(
             &self,
-            _tep: &TepHandle<C>,
+            _tep: &TepHandle,
             _seq: &mut TraceSeq,
             _event: &TepEvent,
             rec: &TepRecord,
@@ -326,7 +326,7 @@ mod tests {
 
     struct Fixture {
         tmp: TempDir,
-        tep: Arc<TepHandle<TestContext>>,
+        tep: Arc<TepHandle>,
         kbuf: KBuffer,
         handlers: HashMap<u32, Arc<dyn EventHandler<TestContext>>>,
         seq: TraceSeq,
@@ -353,7 +353,7 @@ mod tests {
             );
             tep.ids_by_name.insert(("group".into(), "name".into()), 42);
 
-            let mut ret = Self {
+            let ret = Self {
                 tmp,
                 tep: Arc::new(tep),
                 kbuf: KBuffer::new(LongSize::SameAsHost, Endian::SameAsHost),
