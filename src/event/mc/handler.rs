@@ -1,5 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use tracing::warn;
+
 use crate::core::instance::Instance;
 use crate::core::{context::Context, handler::EventHandler};
 use crate::event::Event;
@@ -98,7 +100,7 @@ impl<C: Context> EventHandler<C> for McEventHandler {
         };
 
         if exceeded {
-            eprintln!("ce threshold exceeded");
+            warn!("ce threshold exceeded");
         }
     }
 }

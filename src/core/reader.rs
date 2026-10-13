@@ -6,6 +6,7 @@ use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 use crate::event::Message;
 use crate::traceevent::common::{Endian, LongSize};
@@ -66,14 +67,14 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("skipping cpu={cpu} open {path:?} failed: {e:#}");
+                    error!("skipping cpu={cpu} open {path:?} failed: {e:#}");
                     continue;
                 }
             };
             let fd = match AsyncFd::new(file) {
                 Ok(fd) => fd,
                 Err(e) => {
-                    eprintln!("skipping cpu={cpu} AsyncFd failed: {e}");
+                    error!("skipping cpu={cpu} AsyncFd failed: {e}");
                     continue;
                 }
             };
@@ -99,11 +100,11 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     failed = true;
-                    eprintln!("cpu reader failed: {e:#}");
+                    error!("cpu reader failed: {e:#}");
                 }
                 Err(e) => {
                     failed = true;
-                    eprintln!("cpu reader panicked: {e:#}");
+                    error!("cpu reader panicked: {e:#}");
                 }
             }
         }
@@ -165,7 +166,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
         }
         if filled < subbuf_size {
             // partial should not happen on real tracefs, treat as bad page
-            eprintln!("cpu={cpu} short read {filled} < {subbuf_size}");
+            error!("cpu={cpu} short read {filled} < {subbuf_size}");
             // TODO: Shoud we continue as below? Is there any chance to see malformed data?
             //
             // buf = vec![0u8; subbuf_size]
@@ -176,7 +177,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
         let old = match kbuf.load_subbuffer(page) {
             Ok(old) => old,
             Err(e) => {
-                eprintln!("cpu={cpu} bad subbuffer: {e}");
+                error!("cpu={cpu} bad subbuffer: {e}");
                 buf = vec![0u8; subbuf_size];
                 continue;
             }
@@ -239,7 +240,7 @@ fn build_message<C: Context>(
             ts,
         }),
         Err(e) => {
-            eprintln!("cpu={cpu} id={} parse failed: {e:#}", event.id);
+            error!("cpu={cpu} id={} parse failed: {e:#}", event.id);
             None
         }
     }

@@ -1,6 +1,7 @@
 use std::{sync::Arc, thread};
 
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 use crate::{
     config::Config,
@@ -38,6 +39,8 @@ fn all_instances() -> Vec<Instance> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
     let (ctx, ct) = (Arc::new(RasMemContext::default()), CancellationToken::new());
     let mut handles = Vec::new();
 
@@ -65,9 +68,9 @@ async fn main() -> anyhow::Result<()> {
 
     for (instance, h) in handles {
         match h.join() {
-            Ok(Ok(())) => eprintln!("{instance:?} ok"),
-            Ok(Err(e)) => eprintln!("{instance:?} failed: {e:#}"),
-            Err(_) => eprintln!("{instance:?} panicked"),
+            Ok(Ok(())) => error!("{instance:?} ok"),
+            Ok(Err(e)) => error!("{instance:?} failed: {e:#}"),
+            Err(_) => error!("{instance:?} panicked"),
         }
     }
 

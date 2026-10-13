@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Context as _;
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 
 use crate::{
     core::{context::Context, instance::Instance, processor::EventProcessor, reader::TraceReader},
@@ -49,7 +50,7 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
 
     let handlers_for_instance = event::registry::handlers_for::<C>(instance);
     if handlers_for_instance.is_empty() {
-        eprintln!("{instance:?}: no handlers registered, skipping");
+        error!("{instance:?}: no handlers registered, skipping");
         return anyhow::Ok(());
     }
 
@@ -80,8 +81,8 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
     set.spawn(processor.run(rx, local_cancellation_token.clone()));
 
     tokio::select! {
-        Some(res) = set.join_next() => { eprintln!("{instance:?} task done: {res:?}"); }
-        _ = cancellation_token.cancelled() => { eprintln!("{instance:?} global cancel"); }
+        Some(res) = set.join_next() => { error!("{instance:?} task done: {res:?}"); }
+        _ = cancellation_token.cancelled() => { error!("{instance:?} global cancel"); }
     }
 
     local_cancellation_token.cancel();
