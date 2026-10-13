@@ -207,6 +207,14 @@ mod tests {
     }
 
     #[test]
+    fn test_root_and_instance_root() {
+        let (tmp, fs) = fs();
+
+        assert_eq!(fs.root(), tmp.path());
+        assert_eq!(fs.instance_root(), tmp.path().join("instances/ras_mem"))
+    }
+
+    #[test]
     fn test_enable() {
         let (_tmp, fs) = fs();
 

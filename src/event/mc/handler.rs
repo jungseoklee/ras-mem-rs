@@ -312,10 +312,6 @@ mod tests {
             }
         }
 
-        fn record(&self) -> TepRecord<'_> {
-            Self::record_from_data(&self.data)
-        }
-
         fn record_from_data(data: &[u8]) -> TepRecord<'_> {
             TepRecord {
                 size: data.len(),
