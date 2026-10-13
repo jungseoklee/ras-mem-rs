@@ -7,7 +7,6 @@ use crate::core::{context::Context, handler::EventHandler};
 use crate::event::Event;
 use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
 use crate::traceevent::tep_ext::TepHandleExt;
-use crate::traceevent::trace_seq::TraceSeq;
 
 use super::McContext;
 use super::event::{HwEventErrType, McEvent};
@@ -30,12 +29,11 @@ impl<C: Context> EventHandler<C> for McEventHandler {
     fn parse(
         &self,
         tep: &TepHandle,
-        seq: &mut TraceSeq,
         event: &TepEvent,
         record: &TepRecord,
         ctx: &C,
     ) -> Result<Event, String> {
-        let raw_ty = tep.parse_i64(seq, event, record, "error_type")?;
+        let raw_ty = tep.parse_i64(event, record, "error_type")?;
         let error_type = HwEventErrType::from(raw_ty);
 
         let now_raw = if ctx.config().use_uptime {
@@ -48,28 +46,24 @@ impl<C: Context> EventHandler<C> for McEventHandler {
 
         let mc_event = McEvent {
             timestamp: now_raw,
-            error_count: tep.parse_i64(seq, event, record, "error_count")?,
+            error_count: tep.parse_i64(event, record, "error_count")?,
             error_type,
-            msg: tep.parse_raw(seq, event, record, "msg")?,
-            label: tep.parse_raw(seq, event, record, "label")?,
-            mc_index: tep.parse_i64(seq, event, record, "mc_index")?,
-            top_layer: tep.parse_i64(seq, event, record, "top_layer")? as i8,
-            middle_layer: tep.parse_i64(seq, event, record, "middle_layer")? as i8,
-            lower_layer: tep.parse_i64(seq, event, record, "lower_layer")? as i8,
-            address: tep.parse_i64(seq, event, record, "address")? as u64,
-            grain: tep.parse_i64(seq, event, record, "grain_bits")?,
-            syndrome: tep.parse_i64(seq, event, record, "syndrome")? as u64,
-            driver_detail: tep.parse_raw(seq, event, record, "driver_detail")?,
+            msg: tep.parse_raw(event, record, "msg")?,
+            label: tep.parse_raw(event, record, "label")?,
+            mc_index: tep.parse_i64(event, record, "mc_index")?,
+            top_layer: tep.parse_i64(event, record, "top_layer")? as i8,
+            middle_layer: tep.parse_i64(event, record, "middle_layer")? as i8,
+            lower_layer: tep.parse_i64(event, record, "lower_layer")? as i8,
+            address: tep.parse_i64(event, record, "address")? as u64,
+            grain: tep.parse_i64(event, record, "grain_bits")?,
+            syndrome: tep.parse_i64(event, record, "syndrome")? as u64,
+            driver_detail: tep.parse_raw(event, record, "driver_detail")?,
         };
-
-        seq.push_str(&Self::format_event(&mc_event, error_type.log_level()));
         Ok(Event::Mc(mc_event))
     }
 
     fn process(&self, event: &Event, ctx: &C) {
-        let Event::Mc(ev) = event else {
-            return;
-        };
+        let Event::Mc(ev) = event;
         if ev.error_type != HwEventErrType::Corrected {
             return;
         }
@@ -171,7 +165,6 @@ mod tests {
     use crate::event::mc::{McConfig, McState};
     use crate::state::State;
     use crate::traceevent::tep::{Field, TepEvent, TepHandle, TepRecord};
-    use crate::traceevent::trace_seq::TraceSeq;
     use std::sync::Mutex;
     use std::time::Duration;
 
@@ -179,7 +172,6 @@ mod tests {
         config: Config,
         state: State,
     }
-
     impl Context for TestContext {
         fn config(&self) -> &Config {
             &self.config
@@ -192,11 +184,9 @@ mod tests {
     struct Fixture {
         handle: TepHandle,
         event: TepEvent,
-        seq: TraceSeq,
         data: Vec<u8>,
         ctx: TestContext,
     }
-
     impl Fixture {
         fn new(threshold: Option<u64>) -> Self {
             let mut cfg = Config::default();
@@ -305,7 +295,6 @@ mod tests {
                     fields,
                     print_fmt: "".into(),
                 },
-                seq: TraceSeq::new(),
                 data: vec![0u8; 200],
                 ctx: TestContext {
                     config: cfg,
@@ -361,9 +350,7 @@ mod tests {
         let h = McEventHandler;
         let rec = Fixture::record_from_data(&fx.data);
 
-        let ev = h
-            .parse(&fx.handle, &mut fx.seq, &fx.event, &rec, &fx.ctx)
-            .unwrap();
+        let ev = h.parse(&fx.handle, &fx.event, &rec, &fx.ctx).unwrap();
 
         match ev {
             crate::event::Event::Mc(mc) => {
@@ -372,10 +359,7 @@ mod tests {
                 assert_eq!(mc.label, "dimm0");
                 assert_eq!(mc.address, 0xabcd);
             }
-            _ => panic!("wrong event"),
         }
-        assert!(fx.seq.as_str().contains("Corrected"));
-        assert!(fx.seq.as_str().contains("address: 0x0000abcd"));
     }
 
     #[test]

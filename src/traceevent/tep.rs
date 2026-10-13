@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::traceevent::common::Endian;
-use crate::traceevent::trace_seq::TraceSeq;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
@@ -151,12 +150,10 @@ impl TepHandle {
     // C: tep_get_field_val(s, event, name, record, val, err)
     pub fn get_field_val<'a>(
         &self,
-        s: &mut TraceSeq,
         event: &TepEvent,
         name: &str,
         record: &TepRecord<'a>,
     ) -> Option<i64> {
-        let _ = s;
         let f = event.fields.iter().find(|x| x.name == name)?;
         if f.offset + f.size > record.data.len() {
             return None;
@@ -171,12 +168,10 @@ impl TepHandle {
     // C: tep_get_field_raw(s, event, name, record, len, err)
     pub fn get_field_raw<'a>(
         &self,
-        s: &mut TraceSeq,
         event: &TepEvent,
         name: &str,
         record: &'a TepRecord,
     ) -> Option<(&'a [u8], usize)> {
-        let _ = s;
         let f = event.fields.iter().find(|x| x.name == name)?;
         if f.offset + f.size > record.data.len() {
             return None;
@@ -379,11 +374,7 @@ print fmt: "msg=%s count=%d", REC->msg,
             .find_event_by_name("sched", "sched_switch")
             .unwrap()
             .clone();
-        let mut seq = TraceSeq::new();
-        assert_eq!(
-            h.get_field_val(&mut seq, &ev, "prev_pid", &rec).unwrap(),
-            1234
-        );
+        assert_eq!(h.get_field_val(&ev, "prev_pid", &rec).unwrap(), 1234);
     }
 
     #[test]
@@ -411,8 +402,7 @@ print fmt: "%s"
             common_type: 20,
             cpu: 0,
         };
-        let mut seq = TraceSeq::new();
-        let (raw, len) = h.get_field_raw(&mut seq, &ev, "label", &rec).unwrap();
+        let (raw, len) = h.get_field_raw(&ev, "label", &rec).unwrap();
         // old returned 32 bytes with NULs, fixed returns 5
         assert_eq!(len, 5);
         assert_eq!(raw, b"dimm0");

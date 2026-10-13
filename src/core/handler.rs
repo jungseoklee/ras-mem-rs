@@ -1,10 +1,7 @@
 use crate::{
     core::{context::Context, instance::Instance},
     event::Event,
-    traceevent::{
-        tep::{TepEvent, TepHandle, TepRecord},
-        trace_seq::TraceSeq,
-    },
+    traceevent::tep::{TepEvent, TepHandle, TepRecord},
 };
 
 pub trait EventHandler<C: Context>: Send + Sync {
@@ -14,7 +11,6 @@ pub trait EventHandler<C: Context>: Send + Sync {
     fn parse(
         &self,
         tep: &TepHandle,
-        seq: &mut TraceSeq,
         event: &TepEvent,
         record: &TepRecord<'_>,
         ctx: &C,

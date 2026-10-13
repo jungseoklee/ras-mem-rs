@@ -1,45 +1,26 @@
 use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
-use crate::traceevent::trace_seq::TraceSeq;
 
 pub trait TepHandleExt {
-    fn parse_i64(
-        &self,
-        seq: &mut TraceSeq,
-        event: &TepEvent,
-        record: &TepRecord,
-        name: &str,
-    ) -> Result<i64, String>;
+    fn parse_i64(&self, event: &TepEvent, record: &TepRecord, name: &str) -> Result<i64, String>;
 
-    fn parse_raw(
-        &self,
-        seq: &mut TraceSeq,
-        event: &TepEvent,
-        record: &TepRecord,
-        name: &str,
-    ) -> Result<String, String>;
+    fn parse_raw(&self, event: &TepEvent, record: &TepRecord, name: &str)
+    -> Result<String, String>;
 }
 
 impl TepHandleExt for TepHandle {
-    fn parse_i64(
-        &self,
-        seq: &mut TraceSeq,
-        event: &TepEvent,
-        record: &TepRecord,
-        name: &str,
-    ) -> Result<i64, String> {
-        self.get_field_val(seq, event, name, record)
+    fn parse_i64(&self, event: &TepEvent, record: &TepRecord, name: &str) -> Result<i64, String> {
+        self.get_field_val(event, name, record)
             .ok_or_else(|| format!("can't parse field {name}"))
     }
 
     fn parse_raw(
         &self,
-        seq: &mut TraceSeq,
         event: &TepEvent,
         record: &TepRecord,
         name: &str,
     ) -> Result<String, String> {
         let (raw, _len) = self
-            .get_field_raw(seq, event, name, record)
+            .get_field_raw(event, name, record)
             .ok_or_else(|| format!("can't parse field {name} raw"))?;
 
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -51,12 +32,10 @@ impl TepHandleExt for TepHandle {
 mod tests {
     use super::*;
     use crate::traceevent::tep::{Field, TepEvent, TepHandle, TepRecord};
-    use crate::traceevent::trace_seq::TraceSeq;
 
     struct Fixture {
         handle: TepHandle,
         event: TepEvent,
-        seq: TraceSeq,
         data: Vec<u8>,
     }
 
@@ -118,7 +97,6 @@ mod tests {
                     ],
                     print_fmt: "".into(),
                 },
-                seq: TraceSeq::new(),
                 data: vec![0u8; size],
             }
         }
@@ -166,28 +144,18 @@ mod tests {
 
         let rec = Fixture::record_from_data(&fx.data);
 
-        assert_eq!(
-            fx.handle
-                .parse_i64(&mut fx.seq, &fx.event, &rec, "u32_val")
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            fx.handle
-                .parse_i64(&mut fx.seq, &fx.event, &rec, "i32_val")
-                .unwrap(),
-            42
-        );
+        assert_eq!(fx.handle.parse_i64(&fx.event, &rec, "u32_val").unwrap(), 1);
+        assert_eq!(fx.handle.parse_i64(&fx.event, &rec, "i32_val").unwrap(), 42);
     }
 
     #[test]
     fn test_parse_i64_with_nonexistent_field() {
-        let mut fx = Fixture::new();
+        let fx = Fixture::new();
         let rec = Fixture::record_from_data(&fx.data);
 
         let err = fx
             .handle
-            .parse_i64(&mut fx.seq, &fx.event, &rec, "nonexistent")
+            .parse_i64(&fx.event, &rec, "nonexistent")
             .unwrap_err();
 
         assert!(err.contains("can't parse field nonexistent"));
@@ -195,13 +163,10 @@ mod tests {
 
     #[test]
     fn test_parse_i64_with_out_of_bounds() {
-        let mut fx = Fixture::with_data_size(10); // addr at 72 won't fit
+        let fx = Fixture::with_data_size(10); // addr at 72 won't fit
         let rec = Fixture::record_from_data(&fx.data);
 
-        let err = fx
-            .handle
-            .parse_i64(&mut fx.seq, &fx.event, &rec, "addr")
-            .unwrap_err();
+        let err = fx.handle.parse_i64(&fx.event, &rec, "addr").unwrap_err();
 
         assert!(err.contains("addr"));
     }
@@ -212,12 +177,7 @@ mod tests {
         fx.write_u64(80, (-1i64) as u64);
         let rec = Fixture::record_from_data(&fx.data);
 
-        assert_eq!(
-            fx.handle
-                .parse_i64(&mut fx.seq, &fx.event, &rec, "delta")
-                .unwrap(),
-            -1
-        );
+        assert_eq!(fx.handle.parse_i64(&fx.event, &rec, "delta").unwrap(), -1);
     }
 
     #[test]
@@ -228,15 +188,11 @@ mod tests {
         let rec = Fixture::record_from_data(&fx.data);
 
         assert_eq!(
-            fx.handle
-                .parse_raw(&mut fx.seq, &fx.event, &rec, "msg")
-                .unwrap(),
+            fx.handle.parse_raw(&fx.event, &rec, "msg").unwrap(),
             "hello world"
         );
         assert_eq!(
-            fx.handle
-                .parse_raw(&mut fx.seq, &fx.event, &rec, "label")
-                .unwrap(),
+            fx.handle.parse_raw(&fx.event, &rec, "label").unwrap(),
             "my-label"
         );
     }
@@ -246,22 +202,17 @@ mod tests {
         let fx = Fixture::new();
         let rec = fx.record();
 
-        assert_eq!(
-            fx.handle
-                .parse_raw(&mut fx.seq.clone(), &fx.event, &rec, "msg")
-                .unwrap(),
-            ""
-        );
+        assert_eq!(fx.handle.parse_raw(&fx.event, &rec, "msg").unwrap(), "");
     }
 
     #[test]
     fn test_parse_raw_with_nonexistent_field() {
-        let mut fx = Fixture::new();
+        let fx = Fixture::new();
         let rec = Fixture::record_from_data(&fx.data);
 
         let err = fx
             .handle
-            .parse_raw(&mut fx.seq, &fx.event, &rec, "nonexistent")
+            .parse_raw(&fx.event, &rec, "nonexistent")
             .unwrap_err();
 
         assert!(err.contains("can't parse field nonexistent raw"));
@@ -276,10 +227,7 @@ mod tests {
         fx.data[11] = 0;
         let rec = Fixture::record_from_data(&fx.data);
 
-        let s = fx
-            .handle
-            .parse_raw(&mut fx.seq, &fx.event, &rec, "msg")
-            .unwrap();
+        let s = fx.handle.parse_raw(&fx.event, &rec, "msg").unwrap();
 
         assert!(s.contains('A'));
         assert_eq!(s.chars().count(), 3);

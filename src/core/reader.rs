@@ -12,7 +12,6 @@ use crate::event::Message;
 use crate::traceevent::common::{Endian, LongSize};
 use crate::traceevent::kbuffer::KBuffer;
 use crate::traceevent::tep::TepRecord;
-use crate::traceevent::trace_seq::TraceSeq;
 use crate::{
     core::{context::Context, handler::EventHandler},
     fs::tracefs::TraceFs,
@@ -127,7 +126,6 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
 ) -> anyhow::Result<()> {
     let mut kbuf = KBuffer::new(LongSize::SameAsHost, Endian::SameAsHost);
     let mut buf = vec![0u8; subbuf_size];
-    let mut seq = TraceSeq::new();
 
     loop {
         if cancellation_token.is_cancelled() || tx.is_closed() {
@@ -187,8 +185,7 @@ async fn run_cpu_reader<C: Context + Send + Sync + 'static>(
             buf.resize(subbuf_size, 0);
         }
         while let Some((data, ts)) = kbuf.read_event() {
-            if let Some(msg) = build_message(data, ts, cpu, &kbuf, &tep, &handlers, &ctx, &mut seq)
-            {
+            if let Some(msg) = build_message(data, ts, cpu, &kbuf, &tep, &handlers, &ctx) {
                 if tx.send(msg).await.is_err() {
                     return Ok(());
                 }
@@ -206,7 +203,6 @@ fn build_message<C: Context>(
     tep: &TepHandle,
     handlers: &HashMap<u32, Arc<dyn EventHandler<C>>>,
     ctx: &C,
-    seq: &mut TraceSeq,
 ) -> Option<Message> {
     if data.len() < 2 {
         return None;
@@ -231,8 +227,7 @@ fn build_message<C: Context>(
     };
     let event = tep.find_event_by_record(&record)?;
     let h = handlers.get(&event.id)?;
-    seq.reset();
-    match h.parse(tep, seq, event, &record, ctx) {
+    match h.parse(tep, event, &record, ctx) {
         Ok(ev) => Some(Message {
             event: ev,
             id: event.id,
@@ -258,7 +253,6 @@ mod tests {
     use crate::traceevent::common::{Endian, LongSize};
     use crate::traceevent::kbuffer::KBuffer;
     use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
-    use crate::traceevent::trace_seq::TraceSeq;
     use std::collections::HashMap;
     use std::fs::File;
     use std::os::unix::fs::OpenOptionsExt;
@@ -298,7 +292,6 @@ mod tests {
         fn parse(
             &self,
             _tep: &TepHandle,
-            _seq: &mut TraceSeq,
             _event: &TepEvent,
             rec: &TepRecord,
             _ctx: &C,
@@ -330,7 +323,6 @@ mod tests {
         tep: Arc<TepHandle>,
         kbuf: KBuffer,
         handlers: HashMap<u32, Arc<dyn EventHandler<TestContext>>>,
-        seq: TraceSeq,
         ctx: Arc<TestContext>,
         data: Vec<u8>,
     }
@@ -359,7 +351,6 @@ mod tests {
                 tep: Arc::new(tep),
                 kbuf: KBuffer::new(LongSize::SameAsHost, Endian::SameAsHost),
                 handlers,
-                seq: TraceSeq::new(),
                 ctx: Arc::new(TestContext {
                     config: Config::default(),
                     state: State::default(),
@@ -461,7 +452,6 @@ mod tests {
                 &$fx.tep,
                 &$fx.handlers,
                 &$fx.ctx,
-                &mut $fx.seq,
             )
         };
         ($fx:expr, ts = $ts:expr, cpu = $cpu:expr) => {
@@ -473,20 +463,10 @@ mod tests {
                 &$fx.tep,
                 &$fx.handlers,
                 &$fx.ctx,
-                &mut $fx.seq,
             )
         };
         ($fx:expr, $data:expr) => {
-            super::build_message(
-                $data,
-                100,
-                3,
-                &$fx.kbuf,
-                &$fx.tep,
-                &$fx.handlers,
-                &$fx.ctx,
-                &mut $fx.seq,
-            )
+            super::build_message($data, 100, 3, &$fx.kbuf, &$fx.tep, &$fx.handlers, &$fx.ctx)
         };
     }
 
@@ -579,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_build_message() {
-        let mut fx = Fixture::new();
+        let fx = Fixture::new();
 
         let Some(msg) = build_message!(fx) else {
             panic!()
@@ -590,27 +570,26 @@ mod tests {
                 assert_eq!(mc.mc_index, 3);
                 assert_eq!(mc.label, "dimm0");
             }
-            _ => panic!(),
         }
     }
 
     #[test]
     fn test_build_message_with_one_byte_data() {
-        let mut fx = Fixture::new();
+        let fx = Fixture::new();
 
         assert!(build_message!(fx, &[0u8; 1]).is_none());
     }
 
     #[test]
     fn test_build_message_with_unknown_common_type() {
-        let mut fx = Fixture::new().with_common_type(999);
+        let fx = Fixture::new().with_common_type(999);
 
         assert!(build_message!(fx).is_none());
     }
 
     #[test]
     fn test_build_message_with_failure() {
-        let mut fx = Fixture::new().with_failure();
+        let fx = Fixture::new().with_failure();
 
         assert!(build_message!(fx).is_none());
     }

@@ -56,10 +56,7 @@ mod test {
             Event,
             mc::{McEvent, event::HwEventErrType},
         },
-        traceevent::{
-            tep::{TepEvent, TepHandle, TepRecord},
-            trace_seq::TraceSeq,
-        },
+        traceevent::tep::{TepEvent, TepHandle, TepRecord},
     };
 
     use super::*;
@@ -91,7 +88,6 @@ mod test {
         fn parse(
             &self,
             _tep: &TepHandle,
-            _seq: &mut TraceSeq,
             _event: &TepEvent,
             _record: &TepRecord<'_>,
             _ctx: &C,
