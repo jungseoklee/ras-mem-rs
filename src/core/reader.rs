@@ -254,8 +254,10 @@ mod tests {
     use crate::traceevent::kbuffer::KBuffer;
     use crate::traceevent::tep::{TepEvent, TepHandle, TepRecord};
     use std::collections::HashMap;
+    use std::ffi::CString;
     use std::fs::File;
     use std::os::unix::fs::OpenOptionsExt;
+    use std::path::Path;
     use std::sync::Arc;
     use std::time::{Duration, UNIX_EPOCH};
     use tempfile::TempDir;
@@ -375,17 +377,23 @@ mod tests {
             self
         }
 
-        fn make_async_fd(&self, subbuf_size: usize) -> AsyncFd<File> {
+        fn make_async_fd(&self) -> AsyncFd<File> {
             let path = self.tmp.path().join("async_fd");
-            std::fs::write(&path, vec![0u8; subbuf_size]).unwrap();
-            AsyncFd::new(
-                std::fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_NONBLOCK)
-                    .open(&path)
-                    .unwrap(),
-            )
-            .unwrap()
+            make_fifo(&path);
+            let reader = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+                .unwrap();
+            let path_for_writer = path.clone();
+            std::thread::spawn(move || {
+                let _ = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path_for_writer)
+                    .unwrap();
+                std::thread::park();
+            });
+            AsyncFd::new(reader).unwrap()
         }
 
         fn make_page(&self) -> Vec<u8> {
@@ -425,12 +433,35 @@ mod tests {
             for (cpu, page) in pages.into_iter().enumerate() {
                 let dir = root.join(format!("per_cpu/cpu{}", cpu));
                 std::fs::create_dir_all(&dir).unwrap();
+                let pipe_path = dir.join("trace_pipe_raw");
+                make_fifo(&pipe_path);
+
                 let mut buf = vec![0u8; subbuf_size];
                 buf[..page.len().min(subbuf_size)]
                     .copy_from_slice(&page[..page.len().min(subbuf_size)]);
-                std::fs::write(dir.join("trace_pipe_raw"), buf).unwrap();
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&pipe_path) {
+                        let _ = f.write_all(&buf);
+                        let _ = f.flush();
+                        std::thread::park();
+                    }
+                });
             }
             TraceFs::from_path(self.tmp.path().to_path_buf(), "reader").unwrap()
+        }
+    }
+
+    fn make_fifo(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let p = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        unsafe {
+            if libc::mkfifo(p.as_ptr(), 0o600) != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() != std::io::ErrorKind::AlreadyExists {
+                    panic!("mkfifo {path:?} failed: {err}");
+                }
+            }
         }
     }
 
@@ -515,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_cpu_reader_with_cancellation() {
         let fx = Fixture::new();
-        let fd = fx.make_async_fd(4096);
+        let fd = fx.make_async_fd();
         let (tx, mut rx) = mpsc::channel(10);
         let token = CancellationToken::new();
         let h = tokio::spawn(run_cpu_reader(
@@ -541,7 +572,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_cpu_reader_with_dropped_rx() {
         let fx = Fixture::new();
-        let fd = fx.make_async_fd(4096);
+        let fd = fx.make_async_fd();
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
         let fut = run_cpu_reader(
