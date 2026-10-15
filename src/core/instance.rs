@@ -27,7 +27,10 @@ impl Instance {
     }
 
     pub fn thread_name(&self) -> &'static str {
-        self.name()
+        match self {
+            Self::Dram => "mem-d",
+            Self::Hbm => "mem-h",
+        }
     }
 
     pub fn worker_threads(&self) -> usize {
@@ -49,7 +52,7 @@ mod tests {
         assert_eq!(inst.name(), "ras_mem_d");
         assert_eq!(inst.buffer_size_kb(), 1024);
         assert_eq!(inst.buffer_percent(), 50);
-        assert_eq!(inst.thread_name(), "ras_mem_d");
+        assert_eq!(inst.thread_name(), "mem-d");
         assert_eq!(inst.worker_threads(), 4);
     }
 
@@ -60,7 +63,7 @@ mod tests {
         assert_eq!(inst.name(), "ras_mem_h");
         assert_eq!(inst.buffer_size_kb(), 8192);
         assert_eq!(inst.buffer_percent(), 0);
-        assert_eq!(inst.thread_name(), "ras_mem_h");
+        assert_eq!(inst.thread_name(), "mem-h");
         assert_eq!(inst.worker_threads(), 2);
     }
 }

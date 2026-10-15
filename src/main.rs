@@ -37,7 +37,7 @@ fn all_instances() -> Vec<Instance> {
     vec![Instance::Dram, Instance::Hbm]
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         let (cxt_clone, ct_clone) = (ctx.clone(), ct.clone());
         let ct_for_thread = ct.clone();
         let handle = thread::Builder::new()
-            .name(format!("{}-supervisor", instance.name()))
+            .name(format!("su-{}", instance.thread_name()))
             .spawn(move || -> anyhow::Result<()> {
                 let res = (|| {
                     let rt = build_runtime(instance)?;
