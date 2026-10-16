@@ -458,7 +458,11 @@ mod tests {
 
         fn make_procfs(&self) -> ProcFs {
             std::fs::create_dir(self.tmp.path().join("self")).unwrap();
-            std::fs::write(self.tmp.path().join("self/status"), "Cpus_allowed_list: 0-1\n").unwrap();
+            std::fs::write(
+                self.tmp.path().join("self/status"),
+                "Cpus_allowed_list: 0-1\n",
+            )
+            .unwrap();
             ProcFs::from_path(self.tmp.path().to_path_buf()).unwrap()
         }
     }
@@ -518,7 +522,13 @@ mod tests {
         let page = fx.make_page();
         let tracefs = fx.make_tracefs(vec![page], 4096);
         let procfs = fx.make_procfs();
-        let reader = TraceReader::new(tracefs, procfs, fx.tep.clone(), fx.handlers.clone(), fx.ctx.clone());
+        let reader = TraceReader::new(
+            tracefs,
+            procfs,
+            fx.tep.clone(),
+            fx.handlers.clone(),
+            fx.ctx.clone(),
+        );
         let (tx, mut rx) = mpsc::channel(10);
         let token = CancellationToken::new();
         let token_cloned = token.clone();
@@ -539,7 +549,13 @@ mod tests {
         let fx = Fixture::new();
         let tracefs = fx.make_tracefs(vec![vec![0u8; 4096], vec![0u8; 4096]], 4096);
         let procfs = fx.make_procfs();
-        let reader = TraceReader::new(tracefs, procfs, fx.tep.clone(), fx.handlers.clone(), fx.ctx.clone());
+        let reader = TraceReader::new(
+            tracefs,
+            procfs,
+            fx.tep.clone(),
+            fx.handlers.clone(),
+            fx.ctx.clone(),
+        );
         let (tx, mut rx) = mpsc::channel(100);
         let token = CancellationToken::new();
         let token_cloned = token.clone();

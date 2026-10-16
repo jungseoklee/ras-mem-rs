@@ -2,6 +2,7 @@
 pub enum Instance {
     Dram,
     Hbm,
+    Test,
 }
 
 impl Instance {
@@ -9,6 +10,7 @@ impl Instance {
         match self {
             Self::Dram => "ras_mem_d",
             Self::Hbm => "ras_mem_h",
+            Self::Test => "test",
         }
     }
 
@@ -16,6 +18,7 @@ impl Instance {
         match self {
             Self::Dram => 1024,
             Self::Hbm => 8192,
+            _ => 1024,
         }
     }
 
@@ -23,6 +26,7 @@ impl Instance {
         match self {
             Self::Dram => 50,
             Self::Hbm => 0,
+            _ => 50,
         }
     }
 
@@ -30,6 +34,7 @@ impl Instance {
         match self {
             Self::Dram => "mem-d",
             Self::Hbm => "mem-h",
+            Self::Test => "test",
         }
     }
 
@@ -37,6 +42,7 @@ impl Instance {
         match self {
             Self::Dram => 4, // avoid pipe overrun on CE storms
             Self::Hbm => 2,  // keep draining if one worker dies
+            _ => 4,
         }
     }
 }
@@ -65,5 +71,16 @@ mod tests {
         assert_eq!(inst.buffer_percent(), 0);
         assert_eq!(inst.thread_name(), "mem-h");
         assert_eq!(inst.worker_threads(), 2);
+    }
+
+    #[test]
+    fn test_test() {
+        let inst = Instance::Test;
+
+        assert_eq!(inst.name(), "test");
+        assert_eq!(inst.buffer_size_kb(), 1024);
+        assert_eq!(inst.buffer_percent(), 50);
+        assert_eq!(inst.thread_name(), "test");
+        assert_eq!(inst.worker_threads(), 4);
     }
 }

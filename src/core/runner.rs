@@ -3,10 +3,13 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Context as _;
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::{
-    core::{context::Context, instance::Instance, processor::EventProcessor, reader::TraceReader}, event::{self, Message}, fs::{procfs::ProcFs, tracefs::TraceFs}, traceevent::tep::TepHandle,
+    core::{context::Context, instance::Instance, processor::EventProcessor, reader::TraceReader},
+    event::{self, Message},
+    fs::{procfs::ProcFs, tracefs::TraceFs},
+    traceevent::tep::TepHandle,
 };
 
 pub async fn run_instance_pipeline<C: Context + Send + Sync + 'static>(
@@ -18,7 +21,15 @@ pub async fn run_instance_pipeline<C: Context + Send + Sync + 'static>(
     let tracefs =
         TraceFs::from_instance(instance).with_context(|| format!("{instance:?} no tracefs"))?;
     let procfs = ProcFs::new()?;
-    run_instance_pipeline_with_fs(tracefs, procfs, instance, ctx, cancellation_token, channel_size).await
+    run_instance_pipeline_with_fs(
+        tracefs,
+        procfs,
+        instance,
+        ctx,
+        cancellation_token,
+        channel_size,
+    )
+    .await
 }
 
 pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
@@ -49,7 +60,7 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
 
     let handlers_for_instance = event::registry::handlers_for::<C>(instance);
     if handlers_for_instance.is_empty() {
-        error!("{instance:?}: no handlers registered, skipping");
+        warn!("{instance:?}: no handlers registered, skipping");
         return anyhow::Ok(());
     }
 
@@ -196,9 +207,15 @@ print fmt: "%s", REC->msg
         let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
 
-        let res =
-            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 16)
-                .await;
+        let res = run_instance_pipeline_with_fs(
+            tracefs,
+            procfs,
+            Instance::Dram,
+            ctx,
+            CancellationToken::new(),
+            16,
+        )
+        .await;
 
         assert!(res.is_ok());
         let set_event = fs::read_to_string(fx.root.join("instances/dram/set_event")).unwrap();
@@ -212,9 +229,15 @@ print fmt: "%s", REC->msg
         let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
 
-        let res =
-            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 0)
-                .await;
+        let res = run_instance_pipeline_with_fs(
+            tracefs,
+            procfs,
+            Instance::Dram,
+            ctx,
+            CancellationToken::new(),
+            0,
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(
@@ -232,9 +255,15 @@ print fmt: "%s", REC->msg
         let ctx = Arc::new(TestContext);
         fx.remove_header_page();
 
-        let res =
-            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
-                .await;
+        let res = run_instance_pipeline_with_fs(
+            tracefs,
+            procfs,
+            Instance::Dram,
+            ctx,
+            CancellationToken::new(),
+            10,
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("events/header_page"));
@@ -248,9 +277,15 @@ print fmt: "%s", REC->msg
         let ctx = Arc::new(TestContext);
         fx.write_header_page("invalid");
 
-        let res =
-            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
-                .await;
+        let res = run_instance_pipeline_with_fs(
+            tracefs,
+            procfs,
+            Instance::Dram,
+            ctx,
+            CancellationToken::new(),
+            10,
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(
@@ -268,9 +303,15 @@ print fmt: "%s", REC->msg
         let ctx = Arc::new(TestContext);
         fx.remove_event_format();
 
-        let res =
-            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
-                .await;
+        let res = run_instance_pipeline_with_fs(
+            tracefs,
+            procfs,
+            Instance::Dram,
+            ctx,
+            CancellationToken::new(),
+            10,
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(
@@ -288,9 +329,15 @@ print fmt: "%s", REC->msg
         let ctx = Arc::new(TestContext);
         fx.write_format("invalid");
 
-        let res =
-            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
-                .await;
+        let res = run_instance_pipeline_with_fs(
+            tracefs,
+            procfs,
+            Instance::Dram,
+            ctx,
+            CancellationToken::new(),
+            10,
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("parse_event"));
@@ -305,7 +352,8 @@ print fmt: "%s", REC->msg
         let token = CancellationToken::new();
         token.cancel();
 
-        let res = run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, token, 8).await;
+        let res =
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, token, 8).await;
 
         assert!(res.is_ok());
     }

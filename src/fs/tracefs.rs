@@ -109,7 +109,10 @@ impl TraceFs {
         Ok(size_kb.trim().parse()?)
     }
 
-    pub fn per_cpu_trace_pipe_raw(&self, allowed_cpu_ids: &HashSet<u32>) -> anyhow::Result<Vec<(u32, PathBuf)>> {
+    pub fn per_cpu_trace_pipe_raw(
+        &self,
+        allowed_cpu_ids: &HashSet<u32>,
+    ) -> anyhow::Result<Vec<(u32, PathBuf)>> {
         let per_cpu = self.instance_root.join("per_cpu");
         anyhow::ensure!(per_cpu.exists(), "per_cpu not found at {per_cpu:?}");
 

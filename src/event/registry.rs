@@ -1,9 +1,11 @@
 use crate::core::instance::Instance;
 use crate::core::{context::Context, handler::EventHandler};
 use crate::event::mc::McEventHandler;
+use crate::event::sched_switch::handler::SchedSwitchEventHandler;
 
 pub fn all_handlers<C: Context>() -> Vec<Box<dyn EventHandler<C>>> {
-    let v: Vec<Box<dyn EventHandler<C>>> = vec![Box::new(McEventHandler)];
+    let v: Vec<Box<dyn EventHandler<C>>> =
+        vec![Box::new(McEventHandler), Box::new(SchedSwitchEventHandler)];
     v
 }
 

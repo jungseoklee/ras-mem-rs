@@ -63,7 +63,7 @@ impl<C: Context> EventHandler<C> for McEventHandler {
     }
 
     fn process(&self, event: &Event, ctx: &C) {
-        let Event::Mc(ev) = event;
+        let Event::Mc(ev) = event else { panic!() };
         if ev.error_type != HwEventErrType::Corrected {
             return;
         }
@@ -359,6 +359,7 @@ mod tests {
                 assert_eq!(mc.label, "dimm0");
                 assert_eq!(mc.address, 0xabcd);
             }
+            _ => unreachable!(),
         }
     }
 

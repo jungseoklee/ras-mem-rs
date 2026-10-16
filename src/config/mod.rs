@@ -1,4 +1,4 @@
-use crate::event::mc::McConfig;
+use crate::event::{mc::McConfig, sched_switch::config::SchedSwitchConfig};
 
 #[derive(Debug, Default)]
 pub struct Config {
@@ -7,6 +7,7 @@ pub struct Config {
     pub use_uptime: bool,
     pub uptime_diff: i64,
 
-    // hw specific configuration
+    // event specific configuration
     pub mc_config: McConfig,
+    pub sched_switch_config: SchedSwitchConfig,
 }
