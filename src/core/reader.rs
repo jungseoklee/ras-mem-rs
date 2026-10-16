@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use crate::event::Message;
+use crate::fs::procfs::ProcFs;
 use crate::traceevent::common::{Endian, LongSize};
 use crate::traceevent::kbuffer::KBuffer;
 use crate::traceevent::tep::TepRecord;
@@ -19,7 +20,8 @@ use crate::{
 };
 
 pub struct TraceReader<C: Context + 'static> {
-    fs: TraceFs,
+    tracefs: TraceFs,
+    procfs: ProcFs,
     tep: Arc<TepHandle>,
     handlers: HashMap<u32, Arc<dyn EventHandler<C>>>,
     ctx: Arc<C>,
@@ -27,13 +29,15 @@ pub struct TraceReader<C: Context + 'static> {
 
 impl<C: Context + Send + Sync + 'static> TraceReader<C> {
     pub fn new(
-        fs: TraceFs,
+        tracefs: TraceFs,
+        procfs: ProcFs,
         tep: Arc<TepHandle>,
         handlers: HashMap<u32, Arc<dyn EventHandler<C>>>,
         ctx: Arc<C>,
     ) -> Self {
         Self {
-            fs,
+            tracefs,
+            procfs,
             handlers,
             tep,
             ctx,
@@ -46,14 +50,15 @@ impl<C: Context + Send + Sync + 'static> TraceReader<C> {
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
         let Self {
-            fs,
+            tracefs,
+            procfs,
             tep,
             handlers,
             ctx,
         } = self;
         let handlers = Arc::new(handlers);
-        let pipes = fs.per_cpu_trace_pipe_raw()?;
-        let subbuf_size = fs.buffer_subbuf_size()?;
+        let pipes = tracefs.per_cpu_trace_pipe_raw(&procfs.allowed_cpu_ids()?)?;
+        let subbuf_size = tracefs.buffer_subbuf_size()?;
         let mut set = JoinSet::new();
 
         anyhow::ensure!(!pipes.is_empty(), "no online cpus");
@@ -450,6 +455,12 @@ mod tests {
             }
             TraceFs::from_path(self.tmp.path().to_path_buf(), "reader").unwrap()
         }
+
+        fn make_procfs(&self) -> ProcFs {
+            std::fs::create_dir(self.tmp.path().join("self")).unwrap();
+            std::fs::write(self.tmp.path().join("self/status"), "Cpus_allowed_list: 0-1\n").unwrap();
+            ProcFs::from_path(self.tmp.path().to_path_buf()).unwrap()
+        }
     }
 
     fn make_fifo(path: &Path) {
@@ -505,8 +516,9 @@ mod tests {
     async fn test_run() {
         let fx = Fixture::new();
         let page = fx.make_page();
-        let fs = fx.make_tracefs(vec![page], 4096);
-        let reader = TraceReader::new(fs, fx.tep.clone(), fx.handlers.clone(), fx.ctx.clone());
+        let tracefs = fx.make_tracefs(vec![page], 4096);
+        let procfs = fx.make_procfs();
+        let reader = TraceReader::new(tracefs, procfs, fx.tep.clone(), fx.handlers.clone(), fx.ctx.clone());
         let (tx, mut rx) = mpsc::channel(10);
         let token = CancellationToken::new();
         let token_cloned = token.clone();
@@ -525,8 +537,9 @@ mod tests {
     #[tokio::test]
     async fn test_run_with_cancellation() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs(vec![vec![0u8; 4096], vec![0u8; 4096]], 4096);
-        let reader = TraceReader::new(fs, fx.tep.clone(), fx.handlers.clone(), fx.ctx.clone());
+        let tracefs = fx.make_tracefs(vec![vec![0u8; 4096], vec![0u8; 4096]], 4096);
+        let procfs = fx.make_procfs();
+        let reader = TraceReader::new(tracefs, procfs, fx.tep.clone(), fx.handlers.clone(), fx.ctx.clone());
         let (tx, mut rx) = mpsc::channel(100);
         let token = CancellationToken::new();
         let token_cloned = token.clone();
@@ -601,6 +614,7 @@ mod tests {
                 assert_eq!(mc.mc_index, 3);
                 assert_eq!(mc.label, "dimm0");
             }
+            _ => unreachable!(),
         }
     }
 

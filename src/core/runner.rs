@@ -3,13 +3,10 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Context as _;
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::error;
+use tracing::{error, info, warn};
 
 use crate::{
-    core::{context::Context, instance::Instance, processor::EventProcessor, reader::TraceReader},
-    event::{self, Message},
-    fs::tracefs::TraceFs,
-    traceevent::tep::TepHandle,
+    core::{context::Context, instance::Instance, processor::EventProcessor, reader::TraceReader}, event::{self, Message}, fs::{procfs::ProcFs, tracefs::TraceFs}, traceevent::tep::TepHandle,
 };
 
 pub async fn run_instance_pipeline<C: Context + Send + Sync + 'static>(
@@ -18,13 +15,15 @@ pub async fn run_instance_pipeline<C: Context + Send + Sync + 'static>(
     cancellation_token: CancellationToken,
     channel_size: usize,
 ) -> anyhow::Result<()> {
-    let fs =
+    let tracefs =
         TraceFs::from_instance(instance).with_context(|| format!("{instance:?} no tracefs"))?;
-    run_instance_pipeline_with_fs(fs, instance, ctx, cancellation_token, channel_size).await
+    let procfs = ProcFs::new()?;
+    run_instance_pipeline_with_fs(tracefs, procfs, instance, ctx, cancellation_token, channel_size).await
 }
 
 pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
-    fs: TraceFs,
+    tracefs: TraceFs,
+    procfs: ProcFs,
     instance: Instance,
     ctx: Arc<C>,
     cancellation_token: CancellationToken,
@@ -32,7 +31,7 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
 ) -> anyhow::Result<()> {
     anyhow::ensure!(channel_size > 0, "channel_size must be > 0");
 
-    let header_page_path = fs.header_page_path();
+    let header_page_path = tracefs.header_page_path();
     let header_page = std::fs::read_to_string(&header_page_path)
         .with_context(|| format!("read {header_page_path:?}"))?;
 
@@ -57,7 +56,7 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
     let mut handlers = HashMap::new();
     let mut events_to_enable = Vec::new();
     for h in handlers_for_instance {
-        let event_format_path = fs.event_format_path(h.group(), h.name());
+        let event_format_path = tracefs.event_format_path(h.group(), h.name());
         let event_format = std::fs::read_to_string(&event_format_path)
             .with_context(|| format!("read {event_format_path:?}"))?;
         let id = tep
@@ -66,14 +65,14 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
         events_to_enable.push(format!("{}:{}", h.group(), h.name()));
         handlers.insert(id, Arc::from(h));
     }
-    fs.enable(events_to_enable)?;
+    tracefs.enable(events_to_enable)?;
 
     let local_cancellation_token = cancellation_token.child_token();
 
     let (tx, rx) = mpsc::channel::<Message>(channel_size);
     let tep = Arc::new(tep);
 
-    let reader = TraceReader::new(fs, tep.clone(), handlers.clone(), ctx.clone());
+    let reader = TraceReader::new(tracefs, procfs, tep.clone(), handlers.clone(), ctx.clone());
     let processor = EventProcessor::new(handlers, ctx.clone());
     let mut set = JoinSet::new();
 
@@ -81,8 +80,8 @@ pub async fn run_instance_pipeline_with_fs<C: Context + Send + Sync + 'static>(
     set.spawn(processor.run(rx, local_cancellation_token.clone()));
 
     tokio::select! {
-        Some(res) = set.join_next() => { error!("{instance:?} task done: {res:?}"); }
-        _ = cancellation_token.cancelled() => { error!("{instance:?} global cancel"); }
+        Some(res) = set.join_next() => { info!("{instance:?} task done: {res:?}"); }
+        _ = cancellation_token.cancelled() => { warn!("{instance:?} global cancel"); }
     }
 
     local_cancellation_token.cancel();
@@ -171,6 +170,11 @@ print fmt: "%s", REC->msg
         fn make_tracefs(&self) -> TraceFs {
             TraceFs::from_path(self.root.clone(), "dram").unwrap()
         }
+        fn make_procfs(&self) -> ProcFs {
+            std::fs::create_dir(self.root.join("self")).unwrap();
+            std::fs::write(self.root.join("self/status"), "Cpus_allowed_list: 0-1\n").unwrap();
+            ProcFs::from_path(self.root.to_path_buf()).unwrap()
+        }
         fn remove_header_page(&self) {
             fs::remove_file(self.root.join("events/header_page")).unwrap();
         }
@@ -188,11 +192,12 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
 
         let res =
-            run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, CancellationToken::new(), 16)
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 16)
                 .await;
 
         assert!(res.is_ok());
@@ -203,11 +208,12 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline_with_zero_channel_size() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
 
         let res =
-            run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, CancellationToken::new(), 0)
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 0)
                 .await;
 
         assert!(res.is_err());
@@ -221,12 +227,13 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline_without_header_page() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
         fx.remove_header_page();
 
         let res =
-            run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, CancellationToken::new(), 10)
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
                 .await;
 
         assert!(res.is_err());
@@ -236,12 +243,13 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline_with_invalid_header_page() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
         fx.write_header_page("invalid");
 
         let res =
-            run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, CancellationToken::new(), 10)
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
                 .await;
 
         assert!(res.is_err());
@@ -255,12 +263,13 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline_without_event_format() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
         fx.remove_event_format();
 
         let res =
-            run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, CancellationToken::new(), 10)
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
                 .await;
 
         assert!(res.is_err());
@@ -274,12 +283,13 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline_with_invalid_event_format() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
         fx.write_format("invalid");
 
         let res =
-            run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, CancellationToken::new(), 10)
+            run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, CancellationToken::new(), 10)
                 .await;
 
         assert!(res.is_err());
@@ -289,12 +299,13 @@ print fmt: "%s", REC->msg
     #[tokio::test]
     async fn test_run_instance_pipeline_with_cancellation() {
         let fx = Fixture::new();
-        let fs = fx.make_tracefs();
+        let tracefs = fx.make_tracefs();
+        let procfs = fx.make_procfs();
         let ctx = Arc::new(TestContext);
         let token = CancellationToken::new();
         token.cancel();
 
-        let res = run_instance_pipeline_with_fs(fs, Instance::Dram, ctx, token, 8).await;
+        let res = run_instance_pipeline_with_fs(tracefs, procfs, Instance::Dram, ctx, token, 8).await;
 
         assert!(res.is_ok());
     }

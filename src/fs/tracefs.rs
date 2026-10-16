@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -108,30 +109,29 @@ impl TraceFs {
         Ok(size_kb.trim().parse()?)
     }
 
-    pub fn per_cpu_trace_pipe_raw(&self) -> anyhow::Result<Vec<(u32, PathBuf)>> {
+    pub fn per_cpu_trace_pipe_raw(&self, allowed_cpu_ids: &HashSet<u32>) -> anyhow::Result<Vec<(u32, PathBuf)>> {
         let per_cpu = self.instance_root.join("per_cpu");
         anyhow::ensure!(per_cpu.exists(), "per_cpu not found at {per_cpu:?}");
 
-        // TODO: handle offline cpus, e.g. we might need to check a list of online and offline periodically
-        let mut online = Vec::new();
+        let mut res = Vec::new();
         for e in fs::read_dir(&per_cpu)? {
             let e = e?;
             let name = e.file_name().to_string_lossy().to_string();
             let Ok(cpu_id) = name.trim_start_matches("cpu").parse::<u32>() else {
                 continue;
             };
+            if !allowed_cpu_ids.contains(&cpu_id) {
+                continue;
+            }
             let p = e.path().join("trace_pipe_raw");
             if p.exists() {
-                online.push((cpu_id, p));
+                res.push((cpu_id, p));
             }
         }
 
-        anyhow::ensure!(
-            !online.is_empty(),
-            "no trace_pipe_raw found under {per_cpu:?}"
-        );
-        online.sort_by_key(|(id, _)| *id);
-        Ok(online)
+        anyhow::ensure!(!res.is_empty(), "no trace_pipe_raw found under {per_cpu:?}");
+        res.sort_by_key(|(id, _)| *id);
+        Ok(res)
     }
 
     fn append(&self, payload: &str) -> anyhow::Result<()> {
@@ -324,13 +324,11 @@ mod tests {
     fn test_per_cpu_trace_pipe_raw() {
         let (_tmp, fs) = fs();
 
-        let pipes = fs.per_cpu_trace_pipe_raw().unwrap();
+        let pipes = fs.per_cpu_trace_pipe_raw(&HashSet::from([0])).unwrap();
 
-        assert_eq!(pipes.len(), 2);
+        assert_eq!(pipes.len(), 1);
         assert_eq!(pipes[0].0, 0);
-        assert_eq!(pipes[1].0, 1);
         assert!(pipes[0].1.to_string_lossy().contains("cpu0"));
-        assert!(pipes[1].1.to_string_lossy().contains("cpu1"));
     }
 
     #[test]
@@ -342,7 +340,7 @@ mod tests {
         fs::File::create(instance.join("set_event")).unwrap();
         let fs = TraceFs::from_path(tracing_root, "ras_mem").unwrap();
 
-        let res = fs.per_cpu_trace_pipe_raw();
+        let res = fs.per_cpu_trace_pipe_raw(&HashSet::from([0, 1]));
 
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("per_cpu not found"));
@@ -361,7 +359,7 @@ mod tests {
         // fs::File::create(instance.join("per_cpu/cpu1/trace_pipe_raw")).unwrap();
         let fs = TraceFs::from_path(tracing_root, "ras_mem").unwrap();
 
-        let res = fs.per_cpu_trace_pipe_raw();
+        let res = fs.per_cpu_trace_pipe_raw(&HashSet::from([0, 1]));
 
         assert!(res.is_err());
     }
