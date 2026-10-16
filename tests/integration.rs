@@ -4,8 +4,8 @@ use ras_mem_rs::{Context, Instance, main_with_instances};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
-#[ignore]
-// cargo test test_main_with_instances --no-run 2>&1 | sed -n 's/.*(\(.*\)).*/\1/p' | grep integration | xargs -I{} sudo {} --ignored --nocapture
+#[cfg(target_os = "linux")]
+#[ignore = r#"run this commmand: cargo test test_main_with_instances --no-run 2>&1 | sed -n 's/.*(\(.*\)).*/\1/p' | grep integration | xargs -I{} sudo {} --ignored --nocapture"#]
 async fn test_main_with_instances() -> anyhow::Result<()> {
     let ct = CancellationToken::new();
 
